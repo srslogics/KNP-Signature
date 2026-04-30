@@ -1634,6 +1634,9 @@ input[type="file"] {
 
 .manual-entry-row button {
   align-self: stretch;
+  justify-self: end;
+  width: auto;
+  min-width: 112px;
 }
 
 .directory-intro {
