@@ -423,8 +423,12 @@ function loadPage(page) {
                 <tr>
                   <th>Date</th>
                   <th>Type</th>
+                  <th>Bill No</th>
                   <th>Category</th>
                   <th>Item</th>
+                  <th>NAG</th>
+                  <th>KGS</th>
+                  <th>Rate</th>
                   <th>Mode</th>
                   <th>Amount</th>
                   <th>Balance</th>
@@ -432,7 +436,7 @@ function loadPage(page) {
               </thead>
               <tbody id="ledgerBody">
                 <tr>
-                  <td colspan="7" class="empty">No data yet</td>
+                  <td colspan="11" class="empty">No data yet</td>
                 </tr>
               </tbody>
             </table>

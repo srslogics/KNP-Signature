@@ -40,11 +40,12 @@ class Transaction(Base):
     rate = Column(Numeric)
     amount = Column(Numeric)
     payment_mode = Column(String)
+    bill_number = Column(String)
     source_ref = Column(String, nullable=False, default="", server_default="")
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("date", "party_id", "weight", "rate", "type", "category", "item_type", "source_ref", name="unique_txn"),
+        UniqueConstraint("date", "party_id", "weight", "rate", "type", "category", "item_type", "bill_number", "source_ref", name="unique_txn"),
     )
 
 

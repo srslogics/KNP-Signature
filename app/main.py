@@ -29,6 +29,7 @@ def ensure_database_schema():
         conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS item_type VARCHAR"))
         conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_ref VARCHAR NOT NULL DEFAULT ''"))
         conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS quantity NUMERIC"))
+        conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS bill_number VARCHAR"))
         conn.execute(text("UPDATE transactions SET source_ref = '' WHERE source_ref IS NULL"))
         conn.execute(text("ALTER TABLE retail_bill_items ADD COLUMN IF NOT EXISTS line_type VARCHAR NOT NULL DEFAULT 'STANDARD'"))
         conn.execute(text("ALTER TABLE transactions DROP CONSTRAINT IF EXISTS unique_txn"))
@@ -41,7 +42,7 @@ def ensure_database_schema():
                     WHERE conname = 'unique_txn'
                 ) THEN
                     ALTER TABLE transactions
-                    ADD CONSTRAINT unique_txn UNIQUE (date, party_id, weight, rate, type, category, item_type, source_ref);
+                    ADD CONSTRAINT unique_txn UNIQUE (date, party_id, weight, rate, type, category, item_type, bill_number, source_ref);
                 END IF;
             END
             $$;
@@ -198,7 +199,7 @@ def health_check_head():
 
 
 TEMPLATES = {
-    "dealer": "DEALER,CATEGORY,HEN_TYPE,NAG,KGS,RATE_PER_KG\nABC Supplier,Dealer,Broiler,52,100,120\n",
+    "dealer": "DEALER,BILL_NO,HEN_TYPE,NAG,KGS,RATE_PER_KG\nABC Supplier,INV-101,Broiler,52,100,120\n",
     "vendor": "VENDOR,HEN_TYPE,NAG,KGS,RATE_PER_KG\nXYZ Hotel,Broiler,24,40,150\n",
     "payment": "DATE,PARTY,AMOUNT,PAYMENT_MODE,DIRECTION\n2026-04-21,XYZ Hotel,5000,Online,RECEIVED\n",
     "opening-balance": "DATE,PARTY,OPENING_BALANCE,BALANCE_TYPE\n2026-04-01,XYZ Hotel,25000,RECEIVABLE\n",
@@ -261,6 +262,7 @@ def summarize_ledger_transactions(txns):
                 "category": "RETAIL BILL",
                 "item": "Retail Bill",
                 "payment_mode": first.payment_mode or "NA",
+                "bill_number": first.bill_number or "",
                 "amount": total_amount,
                 "delta": total_amount,
                 "weight": total_weight,
@@ -283,10 +285,12 @@ def summarize_ledger_transactions(txns):
             "category": txn.category or "",
             "item": txn.item_type or "",
             "payment_mode": txn.payment_mode or "NA",
+            "bill_number": txn.bill_number or "",
             "amount": amount,
             "delta": delta,
             "weight": Decimal(txn.weight or 0),
-            "quantity": Decimal(txn.quantity or 0)
+            "quantity": Decimal(txn.quantity or 0),
+            "rate": Decimal(txn.rate or 0)
         })
         index += 1
 
@@ -305,8 +309,12 @@ def build_ledger(txns):
         ledger.append({
             "date": str(txn["date"]),
             "type": txn["type"],
+            "bill_number": txn["bill_number"] or "",
             "category": txn["category"] or "",
             "item": txn["item"] or "",
+            "quantity": float(Decimal(txn["quantity"] or 0)),
+            "weight": float(Decimal(txn["weight"] or 0)),
+            "rate": float(Decimal(txn.get("rate") or 0)),
             "payment_mode": txn["payment_mode"] or "NA",
             "amount": float(amount),
             "delta": float(delta),
@@ -1009,7 +1017,7 @@ def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db:
     for index, row in enumerate(rows, start=1):
         try:
             party_name = str(row.get("dealer") or row.get("party") or "").strip()
-            category = str(row.get("category") or "").strip() or None
+            bill_number = str(row.get("bill_no") or row.get("bill_number") or "").strip() or None
             item_type = str(row.get("hen_type") or row.get("item_type") or "").strip()
             quantity = parse_decimal(row.get("nag", row.get("quantity")))
             weight = parse_decimal(row.get("kgs", row.get("weight")))
@@ -1021,15 +1029,16 @@ def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db:
                 continue
 
             party_id = get_or_create_party(db, party_name, "DEALER", seen_aliases)
-            txn_key = (target_date, party_id, float(weight), float(rate), "PURCHASE", category or "", item_type)
+            txn_key = (target_date, party_id, float(weight), float(rate), "PURCHASE", bill_number or "", item_type)
             existing_txn = db.query(models.Transaction).filter_by(
                 date=target_date,
                 party_id=party_id,
                 weight=float(weight),
                 rate=float(rate),
                 type="PURCHASE",
-                category=category,
-                item_type=item_type
+                category=None,
+                item_type=item_type,
+                bill_number=bill_number
             ).first()
 
             if existing_txn or txn_key in seen_transactions:
@@ -1040,13 +1049,14 @@ def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db:
                 date=target_date,
                 party_id=party_id,
                 type="PURCHASE",
-                category=category,
+                category=None,
                 item_type=item_type,
                 quantity=quantity if quantity > 0 else None,
                 weight=weight,
                 rate=rate,
                 amount=weight * rate,
-                payment_mode="NA"
+                payment_mode="NA",
+                bill_number=bill_number
             ))
             seen_transactions.add(txn_key)
             inserted += 1
@@ -1548,9 +1558,7 @@ def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_dat
     if error:
         return error
 
-    category_col, error = require_column(df, ["CATEGORY"], "CATEGORY")
-    if error:
-        return error
+    bill_number_col = get_first_existing_column(df, ["BILL_NO", "BILL NO", "BILL_NUMBER", "BILL NUMBER", "INVOICE_NO", "INVOICE NO"])
 
     item_col, error = require_column(df, ["HEN_TYPE", "HEN TYPE", "ITEM", "TYPE"], "HEN TYPE")
     if error:
@@ -1587,17 +1595,16 @@ def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_dat
         try:
             if (
                 pd.isna(row[party_col]) or
-                pd.isna(row[category_col]) or
                 pd.isna(row[item_col]) or
                 pd.isna(row[weight_col]) or
                 pd.isna(row[rate_col])
             ):
                 skipped += 1
-                row_error(errors, row_number, "Missing dealer, category, hen type, kg, or rate")
+                row_error(errors, row_number, "Missing dealer, hen type, kg, or rate")
                 continue
 
             party_name = str(row[party_col]).strip()
-            category = str(row[category_col]).strip()
+            bill_number = get_optional_row_value(row, ["BILL_NO", "BILL NO", "BILL_NUMBER", "BILL NUMBER", "INVOICE_NO", "INVOICE NO"])
             item_type = str(row[item_col]).strip()
             weight = float(row[weight_col])
             rate = float(row[rate_col])
@@ -1623,11 +1630,12 @@ def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_dat
                 weight=weight,
                 rate=rate,
                 type="PURCHASE",
-                category=category,
-                item_type=item_type
+                category=None,
+                item_type=item_type,
+                bill_number=bill_number
             ).first()
 
-            txn_key = (date, party_id, weight, rate, "PURCHASE", category, item_type)
+            txn_key = (date, party_id, weight, rate, "PURCHASE", bill_number or "", item_type)
 
             if existing_txn or txn_key in seen_transactions:
                 skipped += 1
@@ -1638,13 +1646,14 @@ def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_dat
                 date=date,
                 party_id=party_id,
                 type="PURCHASE",
-                category=category,
+                category=None,
                 item_type=item_type,
                 quantity=quantity,
                 weight=weight,
                 rate=rate,
                 amount=weight * rate,
-                payment_mode="NA"
+                payment_mode="NA",
+                bill_number=bill_number
             )
 
             db.add(txn)
@@ -2714,8 +2723,12 @@ def export_report(
                 "Party": party_row.name if party_row else party,
                 "Date": row["date"],
                 "Type": row["type"],
+                "Bill No": row.get("bill_number", ""),
                 "Category": row["category"],
                 "Item": row["item"],
+                "NAG": row.get("quantity", 0),
+                "KGS": row.get("weight", 0),
+                "Rate": row.get("rate", 0),
                 "Mode": row["payment_mode"],
                 "Amount": row["amount"],
                 "Balance": row["balance"]
@@ -2726,13 +2739,17 @@ def export_report(
             "Party": party_row.name if party_row else party,
             "Date": "",
             "Type": "TOTAL",
+            "Bill No": "",
             "Category": "",
             "Item": "",
+            "NAG": "",
+            "KGS": "",
+            "Rate": "",
             "Mode": "",
             "Amount": "",
             "Balance": float(balance)
         })
-        columns = ["Party", "Date", "Type", "Category", "Item", "Mode", "Amount", "Balance"]
+        columns = ["Party", "Date", "Type", "Bill No", "Category", "Item", "NAG", "KGS", "Rate", "Mode", "Amount", "Balance"]
         filename = safe_filename(f"ledger_{party}")
         return report_response(rows, columns, filename, file_format, f"Ledger Report - {party}")
 
@@ -3647,6 +3664,7 @@ def create_payment_receipt(payload: dict = Body(...), db: Session = Depends(get_
         category=direction,
         amount=amount,
         payment_mode=payment_mode,
+        bill_number=receipt_number,
         source_ref=f"payment-receipt:{receipt.id}"
     ))
 
@@ -3732,6 +3750,7 @@ def update_payment_receipt(receipt_id: UUID, payload: dict = Body(...), db: Sess
         category=direction,
         amount=amount,
         payment_mode=payment_mode,
+        bill_number=receipt_number,
         source_ref=f"payment-receipt:{receipt.id}"
     ))
 
@@ -3923,6 +3942,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db))
             rate=item["rate"],
             amount=item["amount"],
             payment_mode=payment_mode,
+            bill_number=bill_number,
             source_ref=f"retail-bill:{bill.id}:{item['line_order']}"
         ))
 
@@ -3938,6 +3958,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db))
             rate=ice_amount,
             amount=ice_amount,
             payment_mode=payment_mode,
+            bill_number=bill_number,
             source_ref=f"retail-bill:{bill.id}:ice"
         ))
 
@@ -3953,6 +3974,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db))
             rate=0,
             amount=paid_amount,
             payment_mode=payment_mode,
+            bill_number=bill_number,
             source_ref=f"retail-payment:{bill.id}"
         ))
 
@@ -4143,6 +4165,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
             rate=item["rate"],
             amount=item["amount"],
             payment_mode=payment_mode,
+            bill_number=bill_number,
             source_ref=f"retail-bill:{bill.id}:{item['line_order']}"
         ))
 
@@ -4158,6 +4181,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
             rate=ice_amount,
             amount=ice_amount,
             payment_mode=payment_mode,
+            bill_number=bill_number,
             source_ref=f"retail-bill:{bill.id}:ice"
         ))
 
@@ -4173,6 +4197,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
             rate=0,
             amount=paid_amount,
             payment_mode=payment_mode,
+            bill_number=bill_number,
             source_ref=f"retail-payment:{bill.id}"
         ))
 

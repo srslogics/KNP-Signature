@@ -20,7 +20,7 @@ async function searchLedger() {
     const summary = document.getElementById("partySummary");
 
     // --- Loading state
-    body.innerHTML = `<tr><td colspan="7" class="empty">Loading...</td></tr>`;
+    body.innerHTML = `<tr><td colspan="11" class="empty">Loading...</td></tr>`;
     total.innerText = "₹ 0";
     if (summary) summary.innerHTML = "";
 
@@ -32,7 +32,7 @@ async function searchLedger() {
       const data = await apiCall(`/party/ledger?${params.toString()}`);
 
       if (data.error) {
-        body.innerHTML = `<tr><td colspan="7" class="empty"></td></tr>`;
+        body.innerHTML = `<tr><td colspan="11" class="empty"></td></tr>`;
         body.querySelector("td").innerText = data.error;
         showToast(data.error);
         return;
@@ -41,7 +41,7 @@ async function searchLedger() {
       // --- Multiple matches case
       if (data.multiple_matches) {
         const names = data.results.map(p => p.name).join(", ");
-        body.innerHTML = `<tr><td colspan="7" class="empty"></td></tr>`;
+        body.innerHTML = `<tr><td colspan="11" class="empty"></td></tr>`;
         body.querySelector("td").innerText = `Multiple matches found:\n${names}`;
         return;
       }
@@ -49,7 +49,7 @@ async function searchLedger() {
       // --- No data
       if (!data.ledger || data.ledger.length === 0) {
         const partyLabel = data.party_name || name;
-        body.innerHTML = `<tr><td colspan="7" class="empty">${partyLabel} found, but opening balance is 0 and no transactions are recorded yet</td></tr>`;
+        body.innerHTML = `<tr><td colspan="11" class="empty">${partyLabel} found, but opening balance is 0 and no transactions are recorded yet</td></tr>`;
         total.innerText = formatMoney(data.total_balance || 0);
         renderPartySummary(data.summary ? { summary: data.summary } : null);
         return;
@@ -69,8 +69,12 @@ async function searchLedger() {
 
         appendCell(tr, row.date);
         appendCell(tr, row.type);
+        appendCell(tr, row.bill_number || "-");
         appendCell(tr, row.category || "-");
         appendCell(tr, row.item || "-");
+        appendCell(tr, formatLedgerNumber(row.quantity));
+        appendCell(tr, formatLedgerNumber(row.weight));
+        appendCell(tr, formatLedgerNumber(row.rate));
         appendCell(tr, row.payment_mode || "NA");
         appendCell(tr, formatMoney(row.amount), typeClass);
         appendCell(tr, formatMoney(row.balance));
@@ -80,7 +84,7 @@ async function searchLedger() {
 
     } catch (e) {
       console.error(e);
-      body.innerHTML = `<tr><td colspan="7" class="empty">Error loading data</td></tr>`;
+      body.innerHTML = `<tr><td colspan="11" class="empty">Error loading data</td></tr>`;
       showToast("Ledger fetch failed");
     }
   }
@@ -119,6 +123,12 @@ async function searchLedger() {
 
   function formatMoney(value) {
     return "₹ " + Number(value || 0).toLocaleString();
+  }
+
+  function formatLedgerNumber(value) {
+    const num = Number(value || 0);
+    if (!Number.isFinite(num) || num === 0) return "-";
+    return num.toLocaleString(undefined, { maximumFractionDigits: 3 });
   }
 
   function appendCell(row, value, className = "") {

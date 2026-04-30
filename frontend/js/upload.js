@@ -239,7 +239,7 @@ function removeManualEntryRow(button) {
 function addDealerEntryRow() {
   createManualRow("dealerEntryRows", `
     <input type="text" class="dealerParty" placeholder="Dealer name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)">
-    <input type="text" class="dealerCategory" placeholder="Category (optional)">
+    <input type="text" class="dealerBillNo" placeholder="Bill no. (optional)">
     <input type="text" class="dealerItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)">
     <input type="number" class="dealerNag" placeholder="NAG" min="0" step="1">
     <input type="number" class="dealerWeight" placeholder="Kgs" min="0" step="0.01">
@@ -353,7 +353,7 @@ function submitDealerEntries() {
   const rows = Array.from(document.querySelectorAll("#dealerEntryRows .manual-entry-row"))
     .map(row => ({
       dealer: row.querySelector(".dealerParty")?.value.trim(),
-      category: row.querySelector(".dealerCategory")?.value.trim(),
+      bill_no: row.querySelector(".dealerBillNo")?.value.trim(),
       hen_type: row.querySelector(".dealerItem")?.value.trim(),
       nag: row.querySelector(".dealerNag")?.value,
       kgs: row.querySelector(".dealerWeight")?.value,
