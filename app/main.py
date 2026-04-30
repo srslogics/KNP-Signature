@@ -3962,7 +3962,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db))
             source_ref=f"retail-bill:{bill.id}:ice"
         ))
 
-    if paid_amount > 0:
+    if paid_amount > 0 and outstanding_amount > 0:
         db.add(models.Transaction(
             date=target_date,
             party_id=party_id,
@@ -4185,7 +4185,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
             source_ref=f"retail-bill:{bill.id}:ice"
         ))
 
-    if paid_amount > 0:
+    if paid_amount > 0 and outstanding_amount > 0:
         db.add(models.Transaction(
             date=target_date,
             party_id=party_id,
