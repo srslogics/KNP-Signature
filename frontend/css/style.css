@@ -1384,8 +1384,31 @@ input[type="file"] {
   font-size: 11px;
 }
 
+.thermal-summary {
+  margin-top: 1px;
+}
+
+.thermal-summary-compact {
+  margin-bottom: 2px;
+}
+
+.thermal-totals-table {
+  margin-top: 1px;
+}
+
+.thermal-total-row td {
+  padding-top: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  border-top: none;
+}
+
+.thermal-total-row td:first-child {
+  text-align: left;
+}
+
 .thermal-rule {
-  margin: 8px 0 4px;
+  margin: 2px 0 0;
   font-size: 10px;
   line-height: 1;
   color: #5f6b7a;

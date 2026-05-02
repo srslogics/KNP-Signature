@@ -1476,7 +1476,7 @@ async function printCurrentRetailBill() {
           .thermal-meta-row { display: flex; justify-content: space-between; gap: 8px; margin: 1px 0; }
           .thermal-customer { margin-top: 6px; font-size: 11px; }
           .thermal-customer p { margin: 1px 0; }
-          .thermal-rule { margin: 6px 0 4px; font-size: 10px; letter-spacing: 0; }
+          .thermal-rule { margin: 2px 0 0; font-size: 10px; letter-spacing: 0; }
           .thermal-items-table { width: 100% !important; min-width: 0 !important; max-width: 100% !important; border-collapse: collapse; table-layout: fixed; font-size: 9px; }
           .thermal-items-table th, .thermal-items-table td { padding: 2px 0; vertical-align: top; white-space: nowrap; overflow: hidden; text-overflow: clip; }
           .thermal-items-table th { font-weight: 700; }
@@ -1492,8 +1492,12 @@ async function printCurrentRetailBill() {
           .thermal-items-table.thermal-items-table-dressed th:nth-child(4), .thermal-items-table.thermal-items-table-dressed td:nth-child(4) { width: 16%; text-align: right; }
           .thermal-items-table.thermal-items-table-dressed th:nth-child(5), .thermal-items-table.thermal-items-table-dressed td:nth-child(5) { width: 20%; text-align: right; }
           .thermal-section-row td { padding-top: 5px; font-weight: 700; border-top: 1px dashed #a8adb7; }
-          .thermal-summary { margin-top: 6px; font-size: 11px; }
+          .thermal-summary { margin-top: 1px; font-size: 11px; }
           .thermal-summary p, .thermal-summary-row { display: flex; justify-content: space-between; gap: 10px; margin: 2px 0; }
+          .thermal-summary-compact { margin-bottom: 2px; }
+          .thermal-totals-table { margin-top: 1px; }
+          .thermal-total-row td { padding-top: 3px; font-size: 11px; font-weight: 700; border-top: none; }
+          .thermal-total-row td:first-child { text-align: left; }
           .thermal-total { margin-top: 4px; padding-top: 4px; border-top: 1px dashed #666; font-weight: 700; }
           .thermal-notes, .thermal-note-mini { margin-top: 6px; font-size: 10px; line-height: 1.25; }
           .thermal-footer { margin-top: 10px; text-align: center; font-size: 11px; }
@@ -2042,7 +2046,12 @@ function getThermalReceiptShareStyles() {
     .thermal-center p, .thermal-customer p, .thermal-notes { margin: 2px 0; font-size: 11px; line-height: 1.25; }
     .thermal-meta-grid, .thermal-customer, .thermal-summary { margin-top: 8px; }
     .thermal-meta-row, .thermal-summary p { display: flex; justify-content: space-between; gap: 8px; margin: 2px 0; font-size: 11px; }
-    .thermal-rule { margin: 8px 0 4px; font-size: 10px; line-height: 1; color: #5f6b7a; text-align: center; }
+    .thermal-summary { margin-top: 1px; }
+    .thermal-summary-compact { margin-bottom: 2px; }
+    .thermal-totals-table { margin-top: 1px; }
+    .thermal-total-row td { padding-top: 3px; font-size: 11px; font-weight: 700; border-top: none; }
+    .thermal-total-row td:first-child { text-align: left; }
+    .thermal-rule { margin: 2px 0 0; font-size: 10px; line-height: 1; color: #5f6b7a; text-align: center; }
     .thermal-items-table { width: 100%; min-width: 0; max-width: 100%; table-layout: fixed; border-collapse: collapse; }
     .thermal-items-table th, .thermal-items-table td { padding: 2px 0; border-bottom: none; font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: clip; }
     .thermal-items-table th:nth-child(1), .thermal-items-table td:nth-child(1) { width: 6%; text-align: left; }
@@ -2224,7 +2233,6 @@ function getRetailReceiptMarkup(bill) {
 
       ${customerBlock}
 
-      <div class="thermal-rule">----------------------------------------------</div>
       <table class="thermal-items-table${isDressedOnlyBill ? " thermal-items-table-dressed" : ""}">
         <thead>
           <tr>
@@ -2248,14 +2256,34 @@ function getRetailReceiptMarkup(bill) {
         </thead>
         <tbody>${itemsHtml}</tbody>
       </table>
-      <div class="thermal-rule">----------------------------------------------</div>
-
-      <div class="thermal-summary">
-        <p><span>Total Item(s): ${bill.items.length}</span><span>${isDressedOnlyBill ? `KGS : ${Number(bill.total_weight || 0).toFixed(3)}` : `/NAG : ${formatBillNag(bill.total_nag || bill.total_quantity || 0)}`}</span></p>
-        <p><span>Total Kgs</span><strong>${Number(bill.total_weight || 0).toFixed(3)}</strong></p>
+      <table class="thermal-items-table thermal-totals-table${isDressedOnlyBill ? " thermal-items-table-dressed" : ""}">
+        <tbody>
+          ${isDressedOnlyBill
+            ? `
+              <tr class="thermal-total-row">
+                <td></td>
+                <td><strong>Total</strong></td>
+                <td><strong>${Number(bill.total_weight || 0).toFixed(3)}</strong></td>
+                <td></td>
+                <td><strong>${formatBillMoney(bill.total_amount)}</strong></td>
+              </tr>
+            `
+            : `
+              <tr class="thermal-total-row">
+                <td></td>
+                <td><strong>Total</strong></td>
+                <td><strong>${formatBillNag(bill.total_nag || bill.total_quantity || 0)}</strong></td>
+                <td><strong>${Number(bill.total_weight || 0).toFixed(3)}</strong></td>
+                <td></td>
+                <td><strong>${formatBillMoney(bill.total_amount)}</strong></td>
+              </tr>
+            `}
+        </tbody>
+      </table>
+      <div class="thermal-summary${Number(bill.ice_amount || 0) <= 0 ? " thermal-summary-compact" : ""}">
         ${Number(bill.ice_amount || 0) > 0 ? `<p><span>Items Total</span><strong>${formatBillMoney(bill.items_subtotal_amount ?? (Number(bill.total_amount || 0) - Number(bill.ice_amount || 0)))}</strong></p>` : ""}
         ${Number(bill.ice_amount || 0) > 0 ? `<p><span>Ice Amount</span><strong>${formatBillMoney(bill.ice_amount)}</strong></p>` : ""}
-        <p class="thermal-total"><span>TOTAL</span><strong>${formatBillMoney(bill.total_amount)}</strong></p>
+        ${Number(bill.ice_amount || 0) > 0 ? `<p class="thermal-total"><span>TOTAL</span><strong>${formatBillMoney(bill.total_amount)}</strong></p>` : ""}
         <p><span>${escapeHtml(bill.payment_mode || "Cash")} Payment</span><strong>${formatBillMoney(bill.paid_amount)}</strong></p>
         <p><span>Outstanding balance</span><strong>${formatBillMoney(bill.outstanding_amount)}</strong></p>
       </div>
