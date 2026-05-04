@@ -2471,13 +2471,22 @@ def get_party_profile(name: str, db: Session = Depends(get_db)):
     if not party:
         return {"error": "Party not found"}
 
+    txns = db.query(models.Transaction).filter(
+        models.Transaction.party_id == party.id
+    ).order_by(
+        models.Transaction.date.asc(),
+        models.Transaction.created_at.asc()
+    ).all()
+    balance_after, _ = build_ledger(txns)
+
     return {
         "party": {
             "id": str(party.id),
             "name": party.name,
             "type": party.type or "",
             "phone": party.phone or "",
-            "address": party.address or ""
+            "address": party.address or "",
+            "balance_after": float(balance_after or 0)
         }
     }
 

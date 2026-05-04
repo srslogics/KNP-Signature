@@ -36,6 +36,10 @@ let dressedStockLoadedForDate = "";
 let retailPartyDirectoryCache = [];
 let retailPartyDirectoryLoaded = false;
 let retailPartyDirectoryPromise = null;
+const retailPartyBalanceByMode = {
+  regular: 0,
+  dressed: 0
+};
 let retailSuggestHideTimer = null;
 
 const RETAIL_MODE_FIELDS = {
@@ -410,6 +414,15 @@ function getCachedPartyProfile(name) {
   return retailPartyDirectoryCache.find(party => normalizeRetailPartyLookup(party.name) === normalized) || null;
 }
 
+function setRetailPartyBalance(mode, value) {
+  if (!retailPartyBalanceByMode[mode]) retailPartyBalanceByMode[mode] = 0;
+  retailPartyBalanceByMode[mode] = Number(value || 0);
+}
+
+function getRetailPartyBalance(mode) {
+  return Number(retailPartyBalanceByMode[mode] || 0);
+}
+
 function applyRetailPartyToFields(party, mode = retailBillingMode) {
   if (!party) return;
   const input = retailField(mode, "customerName");
@@ -418,6 +431,7 @@ function applyRetailPartyToFields(party, mode = retailBillingMode) {
   if (input) input.value = party.name || input.value;
   if (phoneInput && !phoneInput.value.trim()) phoneInput.value = party.phone || "";
   if (addressInput && !addressInput.value.trim()) addressInput.value = party.address || "";
+  setRetailPartyBalance(mode, party.balance_after ?? party.party_balance ?? 0);
   scheduleRetailPreviewRender();
 }
 
@@ -867,6 +881,7 @@ function buildRetailBillFromForm(mode = retailBillingMode) {
   const totalWeight = items.reduce((sum, item) => sum + Number(item.weight || (item.unit === "KGS" ? item.nag || item.quantity : 0) || 0), 0);
   const paymentMode = retailField(mode, "paymentMode")?.value || "Cash";
   const settlementType = retailField(mode, "settlementType")?.value || "paid";
+  const customerName = retailField(mode, "customerName")?.value.trim() || "";
   const iceAmount = Number(retailField(mode, "iceAmount")?.value || 0);
   const rawPaidAmount = retailField(mode, "paidAmount")?.value;
   const totalAmount = itemsSubtotalAmount + iceAmount;
@@ -882,6 +897,8 @@ function buildRetailBillFromForm(mode = retailBillingMode) {
   }
 
   const outstandingAmount = Math.max(totalAmount - paidAmount, 0);
+  const priorPartyBalance = customerName ? getRetailPartyBalance(mode) : 0;
+  const partyBalance = priorPartyBalance + outstandingAmount;
 
   return {
     bill_number: retailField(mode, "billNumber")?.value.trim() || "Draft",
@@ -889,13 +906,14 @@ function buildRetailBillFromForm(mode = retailBillingMode) {
     time: new Date().toLocaleTimeString("en-GB"),
     cashier_name: retailField(mode, "cashier")?.value.trim() || "admin",
     bill_mode: mode,
-    customer_name: retailField(mode, "customerName")?.value.trim() || "",
+    customer_name: customerName,
     customer_phone: retailField(mode, "customerPhone")?.value.trim() || "",
     customer_address: retailField(mode, "customerAddress")?.value.trim() || "",
     settlement_type: settlementType,
     payment_mode: paymentMode,
     paid_amount: paidAmount,
     outstanding_amount: outstandingAmount,
+    party_balance: partyBalance,
     requires_customer: outstandingAmount > 0,
     total_amount: totalAmount,
     items_subtotal_amount: itemsSubtotalAmount,
@@ -1806,6 +1824,8 @@ function resetRetailForm() {
   retailField("regular", "customerName").value = "";
   retailField("regular", "customerPhone").value = "";
   retailField("regular", "customerAddress").value = "";
+  setRetailPartyBalance("regular", 0);
+  setRetailPartyBalance("dressed", 0);
   retailField("regular", "iceAmount").value = "";
   retailField("regular", "paidAmount").value = "";
   retailField("regular", "notes").value = "";
@@ -1979,10 +1999,16 @@ async function hydrateRetailCustomerProfile(name, mode = retailBillingMode) {
     const party = data?.party;
     if (!party) return;
 
+    retailPartyDirectoryCache = retailPartyDirectoryCache.filter(
+      existing => normalizeRetailPartyLookup(existing.name) !== normalizeRetailPartyLookup(party.name)
+    );
+    retailPartyDirectoryCache.push(party);
+
     const phoneInput = retailField(mode, "customerPhone");
     const addressInput = retailField(mode, "customerAddress");
     if (phoneInput && !phoneInput.value.trim()) phoneInput.value = party.phone || "";
     if (addressInput && !addressInput.value.trim()) addressInput.value = party.address || "";
+    setRetailPartyBalance(mode, party.balance_after ?? 0);
     scheduleRetailPreviewRender();
   } catch (e) {
     console.error(e);
