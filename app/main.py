@@ -709,6 +709,7 @@ def serialize_retail_bill(bill, items):
         "total_amount": float(bill.total_amount or 0),
         "paid_amount": float(bill.paid_amount or 0),
         "outstanding_amount": float(bill.outstanding_amount or 0),
+        "party_balance": None,
         "notes": bill.notes or "",
         "items": [
             {
@@ -725,6 +726,21 @@ def serialize_retail_bill(bill, items):
             for item in items
         ]
     }
+
+
+def retail_party_balance_after(db: Session, party_id):
+    if not party_id:
+        return None
+
+    txns = db.query(models.Transaction).filter(
+        models.Transaction.party_id == party_id
+    ).order_by(
+        models.Transaction.date.asc(),
+        models.Transaction.created_at.asc()
+    ).all()
+
+    balance_after, _ = build_ledger(txns)
+    return float(balance_after or 0)
 
 
 def serialize_payment_receipt(receipt, balance_after=None):
@@ -3779,7 +3795,9 @@ def get_retail_bill(bill_id: UUID, db: Session = Depends(get_db)):
         models.RetailBillItem.bill_id == bill.id
     ).order_by(models.RetailBillItem.line_order.asc()).all()
 
-    return serialize_retail_bill(bill, items)
+    data = serialize_retail_bill(bill, items)
+    data["party_balance"] = retail_party_balance_after(db, bill.party_id)
+    return data
 
 
 @app.post("/retail-bills")
@@ -3986,10 +4004,13 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db))
         models.RetailBillItem.bill_id == bill.id
     ).order_by(models.RetailBillItem.line_order.asc()).all()
 
+    bill_data = serialize_retail_bill(bill, saved_items)
+    bill_data["party_balance"] = retail_party_balance_after(db, bill.party_id)
+
     return {
         "status": "success",
         "message": "Retail bill created",
-        "bill": serialize_retail_bill(bill, saved_items)
+        "bill": bill_data
     }
 
 
@@ -4216,10 +4237,13 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
         models.RetailBillItem.bill_id == bill.id
     ).order_by(models.RetailBillItem.line_order.asc()).all()
 
+    bill_data = serialize_retail_bill(bill, saved_items)
+    bill_data["party_balance"] = retail_party_balance_after(db, bill.party_id)
+
     return {
         "status": "success",
         "message": "Retail bill updated",
-        "bill": serialize_retail_bill(bill, saved_items)
+        "bill": bill_data
     }
 
 

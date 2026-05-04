@@ -1551,9 +1551,12 @@ function getRetailBillShareText(bill) {
     lines.push(`Items Total: Rs ${formatBillMoney(bill.items_subtotal_amount ?? (Number(bill.total_amount || 0) - Number(bill.ice_amount || 0)))}`);
     lines.push(`Ice Amount: Rs ${formatBillMoney(bill.ice_amount)}`);
   }
+  const receiptOutstanding = bill.customer_name
+    ? Number((bill.party_balance ?? bill.outstanding_amount) || 0)
+    : Number(bill.outstanding_amount || 0);
   lines.push(`Total Amount: Rs ${formatBillMoney(bill.total_amount)}`);
   lines.push(`Received: Rs ${formatBillMoney(bill.paid_amount)}`);
-  lines.push(`Remaining: Rs ${formatBillMoney(bill.outstanding_amount)}`);
+  lines.push(`Remaining: Rs ${formatBillMoney(receiptOutstanding)}`);
   lines.push(`Mode: ${bill.payment_mode || "Cash"}`);
   if (bill.notes) {
     lines.push(`Notes: ${bill.notes}`);
@@ -2206,6 +2209,10 @@ function getRetailReceiptMarkup(bill) {
     ${renderReceiptRows(dressedItems, "Dressed Chicken", regularItems.length)}
   `;
 
+  const receiptOutstanding = bill.customer_name
+    ? Number((bill.party_balance ?? bill.outstanding_amount) || 0)
+    : Number(bill.outstanding_amount || 0);
+
   const customerBlock = (bill.customer_name || bill.customer_phone || bill.customer_address) ? `
     <div class="thermal-customer">
       ${bill.customer_name ? `<p><strong>Customer Name</strong> : ${escapeHtml(bill.customer_name)}</p>` : ""}
@@ -2285,7 +2292,7 @@ function getRetailReceiptMarkup(bill) {
         ${Number(bill.ice_amount || 0) > 0 ? `<p><span>Ice Amount</span><strong>${formatBillMoney(bill.ice_amount)}</strong></p>` : ""}
         ${Number(bill.ice_amount || 0) > 0 ? `<p class="thermal-total"><span>TOTAL</span><strong>${formatBillMoney(bill.total_amount)}</strong></p>` : ""}
         <p><span>${escapeHtml(bill.payment_mode || "Cash")} Payment</span><strong>${formatBillMoney(bill.paid_amount)}</strong></p>
-        <p><span>Outstanding balance</span><strong>${formatBillMoney(bill.outstanding_amount)}</strong></p>
+        <p><span>Outstanding balance</span><strong>${formatBillMoney(receiptOutstanding)}</strong></p>
       </div>
 
       ${bill.requires_customer && !bill.customer_name ? `<div class="thermal-notes">Known customer name is required when this bill has credit outstanding.</div>` : ""}
