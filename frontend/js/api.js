@@ -55,8 +55,16 @@ async function apiCall(url, method = "GET", body = null, headers = {}, apiOption
       const res = await fetchWithRetry(BASE_URL + url, options);
 
       if (res.status === 401) {
+        let errorMessage = "AUTH_REQUIRED";
+        try {
+          const payload = await res.clone().json();
+          const authDetail = payload?.error || payload?.detail;
+          if (authDetail) errorMessage = String(authDetail);
+        } catch (e) {
+          // ignore parse issues and fall back to generic auth error
+        }
         clearAuthState();
-        throw new Error("AUTH_REQUIRED");
+        throw new Error(errorMessage || "AUTH_REQUIRED");
       }
 
       if (!res.ok) {

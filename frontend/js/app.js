@@ -91,7 +91,33 @@ async function bootAuth() {
       return;
     }
 
-    const me = await optionalApiCall("/auth/me", null, "GET", null, { cache: false });
+    let me = null;
+    try {
+      me = await apiCall("/auth/me", "GET", null, {}, { loader: false, cache: false });
+    } catch (e) {
+      const authMessage = String(e?.message || "");
+      if (authMessage === "AUTH_REQUIRED" || authMessage.toLowerCase().includes("authentication required")) {
+        localStorage.removeItem("STOCKPILOT_AUTH_TOKEN");
+        localStorage.removeItem("STOCKPILOT_AUTH_USER");
+        authNeedsSetup = false;
+        currentUser = null;
+        updateAuthUi();
+        renderLoginScreen(false);
+        authBootstrapped = true;
+        return;
+      }
+
+      if (currentUser) {
+        authNeedsSetup = false;
+        updateAuthUi();
+        authBootstrapped = true;
+        loadPage("dashboard");
+        return;
+      }
+
+      throw e;
+    }
+
     if (!me?.user) {
       localStorage.removeItem("STOCKPILOT_AUTH_TOKEN");
       localStorage.removeItem("STOCKPILOT_AUTH_USER");
