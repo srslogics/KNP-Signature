@@ -287,6 +287,9 @@ input[type="file"] {
 }
 
 .top-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   flex-shrink: 0;
   padding: 8px 12px;
   border: 1px solid var(--line);
@@ -294,6 +297,19 @@ input[type="file"] {
   background: rgb(255 255 255 / 0.78);
   color: var(--muted);
   font-weight: 650;
+}
+
+#authMeta {
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#authButton {
+  min-width: 92px;
+  padding: 10px 16px;
+  border-radius: 999px;
 }
 
 .card,
@@ -879,6 +895,25 @@ input[type="file"] {
 .report-form input,
 .report-form select {
   width: 100%;
+}
+
+.auth-shell {
+  display: flex;
+  justify-content: center;
+  padding-top: 48px;
+}
+
+.auth-card {
+  width: min(100%, 520px);
+}
+
+.auth-form {
+  grid-template-columns: 1fr;
+}
+
+.auth-inline-form {
+  margin-top: 12px;
+  grid-template-columns: minmax(160px, 1.1fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(120px, 0.8fr) auto;
 }
 
 .report-actions {

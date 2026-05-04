@@ -9,6 +9,18 @@ let activeRequests = 0;
 const responseCache = new Map();
 const CACHE_TTL = 60 * 1000;
 
+function getAuthToken() {
+  return localStorage.getItem("STOCKPILOT_AUTH_TOKEN") || "";
+}
+
+function clearAuthState() {
+  localStorage.removeItem("STOCKPILOT_AUTH_TOKEN");
+  localStorage.removeItem("STOCKPILOT_AUTH_USER");
+  if (typeof handleAuthExpired === "function") {
+    handleAuthExpired();
+  }
+}
+
 async function apiCall(url, method = "GET", body = null, headers = {}, apiOptions = {}) {
     const shouldShowLoader = apiOptions.loader === true || method !== "GET";
     const useCache = apiOptions.cache === true && method === "GET";
@@ -25,15 +37,27 @@ async function apiCall(url, method = "GET", body = null, headers = {}, apiOption
 
     const options = {
       method: method,
-      headers: headers,
+      headers: { ...headers },
     };
 
     try {
+      const authToken = getAuthToken();
+      if (authToken && !url.startsWith("/auth/")) {
+        options.headers["X-Auth-Token"] = authToken;
+      } else if (authToken && url === "/auth/me") {
+        options.headers["X-Auth-Token"] = authToken;
+      }
+
       if (body) {
         options.body = body;
       }
 
       const res = await fetchWithRetry(BASE_URL + url, options);
+
+      if (res.status === 401) {
+        clearAuthState();
+        throw new Error("AUTH_REQUIRED");
+      }
 
       if (!res.ok) {
         throw new Error(`API error: ${res.status}`);

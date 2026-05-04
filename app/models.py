@@ -17,6 +17,28 @@ class Party(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username = Column(String, nullable=False, unique=True)
+    password_hash = Column(String, nullable=False)
+    role = Column(String, nullable=False, default="STAFF")  # OWNER / STAFF
+    display_name = Column(String)
+    is_active = Column(String, nullable=False, default="true")
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    token = Column(String, nullable=False, unique=True)
+    expires_at = Column(TIMESTAMP, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+
 class PartyAlias(Base):
     __tablename__ = "party_aliases"
 

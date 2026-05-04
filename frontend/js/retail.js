@@ -1113,6 +1113,10 @@ async function saveRetailBill() {
 
   try {
     const isEditing = Boolean(currentRetailBill?.id && !String(currentRetailBill.id).startsWith("local-"));
+    if (isEditing && typeof isOwner === "function" && !isOwner()) {
+      showToast("Only owner can edit previous bills");
+      return null;
+    }
     const url = isEditing ? `/retail-bills/${currentRetailBill.id}` : "/retail-bills";
     const method = isEditing ? "PUT" : "POST";
     const data = await apiCall(url, method, JSON.stringify({
@@ -1201,6 +1205,10 @@ async function savePaymentReceipt() {
 
   try {
     const isEditing = Boolean(currentPaymentReceipt?.id);
+    if (isEditing && typeof isOwner === "function" && !isOwner()) {
+      showToast("Only owner can edit previous receipts");
+      return null;
+    }
     const url = isEditing ? `/payment-receipts/${currentPaymentReceipt.id}` : "/payment-receipts";
     const method = isEditing ? "PUT" : "POST";
     const data = await apiCall(url, method, JSON.stringify(draft), { "Content-Type": "application/json" });

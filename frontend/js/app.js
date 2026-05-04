@@ -1,6 +1,232 @@
 let currentPage = "";
+let currentUser = null;
+let authBootstrapped = false;
+let authNeedsSetup = false;
+
+function getStoredAuthUser() {
+  try {
+    return JSON.parse(localStorage.getItem("STOCKPILOT_AUTH_USER") || "null");
+  } catch (e) {
+    return null;
+  }
+}
+
+function isOwner() {
+  return String(currentUser?.role || "").toUpperCase() === "OWNER";
+}
+
+function isStaff() {
+  return String(currentUser?.role || "").toUpperCase() === "STAFF";
+}
+
+function updateAuthUi() {
+  const authMeta = document.getElementById("authMeta");
+  const authButton = document.getElementById("authButton");
+  const dailySheetMenu = document.getElementById("menu-daily-sheet");
+
+  if (authMeta) {
+    authMeta.textContent = currentUser
+      ? `${currentUser.display_name || currentUser.username} (${currentUser.role})`
+      : "";
+  }
+
+  if (authButton) {
+    authButton.textContent = currentUser ? "Logout" : "Login";
+  }
+
+  if (dailySheetMenu) {
+    dailySheetMenu.style.display = isOwner() ? "" : "none";
+  }
+}
+
+function renderLoginScreen(setupMode = false) {
+  const content = document.getElementById("content");
+  const title = document.getElementById("pageTitle");
+  if (title) title.innerText = setupMode ? "Owner Setup" : "Login";
+  if (!content) return;
+
+  content.innerHTML = `
+    <div class="container auth-shell">
+      <div class="card auth-card">
+        <div class="page-intro">
+          <span>${setupMode ? "First Time Setup" : "Welcome Back"}</span>
+          <h2>${setupMode ? "Create the owner account" : "Login to continue"}</h2>
+        </div>
+        <div class="report-form auth-form">
+          <input type="text" id="authUsername" placeholder="Username" autocomplete="username">
+          ${setupMode ? `<input type="text" id="authDisplayName" placeholder="Display name">` : ""}
+          <input type="password" id="authPassword" placeholder="Password" autocomplete="current-password">
+        </div>
+        <div class="report-actions">
+          <button onclick="${setupMode ? "setupOwnerAccount()" : "loginUser()"}">${setupMode ? "Create Owner" : "Login"}</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function bootAuth() {
+  currentUser = getStoredAuthUser();
+  updateAuthUi();
+
+  try {
+    const setup = await optionalApiCall("/auth/setup-status", { has_users: true }, "GET", null, { cache: false });
+    const token = localStorage.getItem("STOCKPILOT_AUTH_TOKEN");
+
+    if (!setup.has_users) {
+      authNeedsSetup = true;
+      currentUser = null;
+      updateAuthUi();
+      renderLoginScreen(true);
+      authBootstrapped = true;
+      return;
+    }
+
+    if (!token) {
+      authNeedsSetup = false;
+      currentUser = null;
+      updateAuthUi();
+      renderLoginScreen(false);
+      authBootstrapped = true;
+      return;
+    }
+
+    const me = await optionalApiCall("/auth/me", null, "GET", null, { cache: false });
+    if (!me?.user) {
+      localStorage.removeItem("STOCKPILOT_AUTH_TOKEN");
+      localStorage.removeItem("STOCKPILOT_AUTH_USER");
+      authNeedsSetup = false;
+      currentUser = null;
+      updateAuthUi();
+      renderLoginScreen(false);
+      authBootstrapped = true;
+      return;
+    }
+
+    currentUser = me.user;
+    authNeedsSetup = false;
+    localStorage.setItem("STOCKPILOT_AUTH_USER", JSON.stringify(currentUser));
+    updateAuthUi();
+    authBootstrapped = true;
+    loadPage("dashboard");
+  } catch (e) {
+    authNeedsSetup = false;
+    currentUser = null;
+    updateAuthUi();
+    renderLoginScreen(false);
+    authBootstrapped = true;
+  }
+}
+
+async function loginUser() {
+  const username = document.getElementById("authUsername")?.value.trim() || "";
+  const password = document.getElementById("authPassword")?.value || "";
+  if (!username || !password) {
+    showToast("Enter username and password");
+    return;
+  }
+  const data = await apiCall("/auth/login", "POST", JSON.stringify({ username, password }), { "Content-Type": "application/json" });
+  if (data.error) {
+    showToast(data.error);
+    return;
+  }
+  localStorage.setItem("STOCKPILOT_AUTH_TOKEN", data.token);
+  localStorage.setItem("STOCKPILOT_AUTH_USER", JSON.stringify(data.user));
+  authNeedsSetup = false;
+  currentUser = data.user;
+  updateAuthUi();
+  loadPage("dashboard");
+}
+
+async function setupOwnerAccount() {
+  const username = document.getElementById("authUsername")?.value.trim() || "";
+  const password = document.getElementById("authPassword")?.value || "";
+  const displayName = document.getElementById("authDisplayName")?.value.trim() || username;
+  if (!username || !password) {
+    showToast("Enter username and password");
+    return;
+  }
+  const data = await apiCall("/auth/setup-owner", "POST", JSON.stringify({ username, password, display_name: displayName }), { "Content-Type": "application/json" });
+  if (data.error) {
+    showToast(data.error);
+    return;
+  }
+  localStorage.setItem("STOCKPILOT_AUTH_TOKEN", data.token);
+  localStorage.setItem("STOCKPILOT_AUTH_USER", JSON.stringify(data.user));
+  authNeedsSetup = false;
+  currentUser = data.user;
+  updateAuthUi();
+  loadPage("dashboard");
+}
+
+async function handleAuthButton() {
+  if (!currentUser) {
+    renderLoginScreen(authNeedsSetup);
+    return;
+  }
+  await optionalApiCall("/auth/logout", { status: "ok" }, "POST", null, { cache: false });
+  localStorage.removeItem("STOCKPILOT_AUTH_TOKEN");
+  localStorage.removeItem("STOCKPILOT_AUTH_USER");
+  authNeedsSetup = false;
+  currentUser = null;
+  updateAuthUi();
+  renderLoginScreen(false);
+}
+
+function handleAuthExpired() {
+  currentUser = null;
+  updateAuthUi();
+  renderLoginScreen(authNeedsSetup);
+}
+
+async function loadUserAccessList() {
+  const box = document.getElementById("userAccessList");
+  if (!box || !isOwner()) return;
+  box.textContent = "Loading users...";
+  const data = await optionalApiCall("/auth/users", { results: [] }, "GET", null, { cache: false });
+  const users = data.results || [];
+  if (!users.length) {
+    box.textContent = "No users yet";
+    return;
+  }
+  box.innerHTML = users.map(user => `${user.display_name || user.username} - ${user.username} (${user.role})`).join("<br>");
+}
+
+async function createAppUser() {
+  if (!isOwner()) {
+    showToast("Only owner can create users");
+    return;
+  }
+  const display_name = document.getElementById("newUserDisplayName")?.value.trim() || "";
+  const username = document.getElementById("newUsername")?.value.trim() || "";
+  const password = document.getElementById("newUserPassword")?.value || "";
+  const role = document.getElementById("newUserRole")?.value || "STAFF";
+  if (!username || !password) {
+    showToast("Enter username and password");
+    return;
+  }
+  const data = await apiCall("/auth/users", "POST", JSON.stringify({ display_name, username, password, role }), { "Content-Type": "application/json" });
+  if (data.error) {
+    showToast(data.error);
+    return;
+  }
+  document.getElementById("newUserDisplayName").value = "";
+  document.getElementById("newUsername").value = "";
+  document.getElementById("newUserPassword").value = "";
+  document.getElementById("newUserRole").value = "STAFF";
+  showToast("User created");
+  loadUserAccessList();
+}
 
 function loadPage(page) {
+    if (!currentUser) {
+      renderLoginScreen(authNeedsSetup);
+      return;
+    }
+    if (page === "daily-sheet" && !isOwner()) {
+      showToast("Daily Sheet is only for owner");
+      return;
+    }
     currentPage = page;
     const content = document.getElementById("content");
     const title = document.getElementById("pageTitle");
@@ -228,6 +454,26 @@ function loadPage(page) {
             </div>
           </div>
 
+          ${isOwner() ? `
+            <div class="card toolbar dashboard-toolbar">
+              <div class="dashboard-toolbar-copy">
+                <span>Access Control</span>
+                <h3>Create staff users and keep editing rights with owner only</h3>
+              </div>
+              <div class="report-form auth-form auth-inline-form">
+                <input type="text" id="newUserDisplayName" placeholder="Display name">
+                <input type="text" id="newUsername" placeholder="Username">
+                <input type="password" id="newUserPassword" placeholder="Password">
+                <select id="newUserRole">
+                  <option value="STAFF">Staff</option>
+                  <option value="OWNER">Owner</option>
+                </select>
+                <button onclick="createAppUser()">Add User</button>
+              </div>
+              <div id="userAccessList" class="upload-box directory-intro">Loading users...</div>
+            </div>
+          ` : ""}
+
           <div class="dashboard-kpi-grid">
             <div class="dashboard-kpi-card tone-blue">
               <span>Today's Revenue</span>
@@ -384,6 +630,7 @@ function loadPage(page) {
       setTimeout(() => {
         const today = formatDateInput(new Date());
         document.getElementById("dashboardDate").value = today;
+        if (isOwner()) loadUserAccessList();
         loadDashboard();
       }, 100);
     }
@@ -955,10 +1202,9 @@ function loadPage(page) {
 
   // --- Initial load
   window.onload = () => {
-    loadPage("dashboard");
-
     const today = new Date().toLocaleDateString();
     document.getElementById("todayDate").innerText = today;
+    bootAuth();
   };
 
   function formatDateInput(date) {

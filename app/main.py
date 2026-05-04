@@ -1,9 +1,13 @@
 from uuid import UUID, uuid4
 from io import BytesIO
 from urllib.parse import quote
-from datetime import datetime
+from datetime import datetime, timedelta
+import hashlib
+import hmac
+import os
+import secrets
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Header
 from app.db import engine, Base
 from fastapi import UploadFile, File, Depends, Body
 import pandas as pd
@@ -14,7 +18,7 @@ from sqlalchemy import case, func, text, or_
 from decimal import Decimal
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 
 app = FastAPI()
 
@@ -32,6 +36,28 @@ def ensure_database_schema():
         conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS bill_number VARCHAR"))
         conn.execute(text("UPDATE transactions SET source_ref = '' WHERE source_ref IS NULL"))
         conn.execute(text("ALTER TABLE retail_bill_items ADD COLUMN IF NOT EXISTS line_type VARCHAR NOT NULL DEFAULT 'STANDARD'"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS users (
+                id UUID PRIMARY KEY,
+                username VARCHAR NOT NULL UNIQUE,
+                password_hash VARCHAR NOT NULL,
+                role VARCHAR NOT NULL DEFAULT 'STAFF',
+                display_name VARCHAR,
+                is_active VARCHAR NOT NULL DEFAULT 'true',
+                created_at TIMESTAMP DEFAULT now()
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS user_sessions (
+                id UUID PRIMARY KEY,
+                user_id UUID NOT NULL REFERENCES users(id),
+                token VARCHAR NOT NULL UNIQUE,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT now()
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions (token)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions (user_id)"))
         conn.execute(text("ALTER TABLE transactions DROP CONSTRAINT IF EXISTS unique_txn"))
         conn.execute(text("""
             DO $$
@@ -175,6 +201,82 @@ def get_db():
     finally:
         db.close()
 
+
+SESSION_DAYS = 14
+ROLE_OWNER = "OWNER"
+ROLE_STAFF = "STAFF"
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000)
+    return f"{salt}${derived.hex()}"
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    try:
+        salt, stored = str(password_hash or "").split("$", 1)
+    except ValueError:
+        return False
+    derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000).hex()
+    return hmac.compare_digest(derived, stored)
+
+
+def serialize_user(user: models.User):
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "role": (user.role or ROLE_STAFF).upper(),
+        "display_name": user.display_name or user.username
+    }
+
+
+def create_user_session(db: Session, user: models.User):
+    token = secrets.token_urlsafe(32)
+    session = models.UserSession(
+        id=uuid4(),
+        user_id=user.id,
+        token=token,
+        expires_at=datetime.utcnow() + timedelta(days=SESSION_DAYS)
+    )
+    db.add(session)
+    db.flush()
+    return session
+
+
+def get_active_session(db: Session, token: str | None):
+    if not token:
+        return None
+    session = db.query(models.UserSession).filter(
+        models.UserSession.token == token
+    ).first()
+    if not session:
+        return None
+    if session.expires_at and session.expires_at < datetime.utcnow():
+        db.delete(session)
+        db.commit()
+        return None
+    return session
+
+
+def get_current_user(
+    db: Session = Depends(get_db),
+    x_auth_token: str | None = Header(default=None)
+):
+    session = get_active_session(db, x_auth_token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    user = db.query(models.User).filter(models.User.id == session.user_id).first()
+    if not user or str(user.is_active or "true").lower() != "true":
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+def require_owner(user: models.User = Depends(get_current_user)):
+    if (user.role or ROLE_STAFF).upper() != ROLE_OWNER:
+        raise HTTPException(status_code=403, detail="Owner access required")
+    return user
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # for now
@@ -182,6 +284,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+PUBLIC_PATH_PREFIXES = (
+    "/auth/",
+    "/healthz",
+)
+PUBLIC_PATHS = {"/"}
+
+
+@app.middleware("http")
+async def auth_middleware(request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if path in PUBLIC_PATHS or any(path.startswith(prefix) for prefix in PUBLIC_PATH_PREFIXES):
+        return await call_next(request)
+
+    token = request.headers.get("X-Auth-Token")
+    db = SessionLocal()
+    try:
+        session = get_active_session(db, token)
+        if not session:
+            return JSONResponse(status_code=401, content={"error": "Authentication required"})
+        user = db.query(models.User).filter(models.User.id == session.user_id).first()
+        if not user or str(user.is_active or "true").lower() != "true":
+            return JSONResponse(status_code=401, content={"error": "Authentication required"})
+    finally:
+        db.close()
+
+    return await call_next(request)
 
 @app.get("/")
 def root():
@@ -196,6 +328,110 @@ def health_check():
 @app.head("/healthz")
 def health_check_head():
     return Response(status_code=200)
+
+
+@app.get("/auth/setup-status")
+def auth_setup_status(db: Session = Depends(get_db)):
+    count = db.query(models.User).count()
+    return {"has_users": count > 0}
+
+
+@app.post("/auth/setup-owner")
+def auth_setup_owner(payload: dict = Body(...), db: Session = Depends(get_db)):
+    if db.query(models.User).count() > 0:
+        return {"error": "Owner setup already completed"}
+
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "")
+    display_name = str(payload.get("display_name") or username).strip()
+    if len(username) < 3:
+        return {"error": "Username must be at least 3 characters"}
+    if len(password) < 4:
+        return {"error": "Password must be at least 4 characters"}
+
+    user = models.User(
+        id=uuid4(),
+        username=username,
+        password_hash=hash_password(password),
+        role=ROLE_OWNER,
+        display_name=display_name,
+        is_active="true"
+    )
+    db.add(user)
+    db.flush()
+    session = create_user_session(db, user)
+    db.commit()
+    return {"user": serialize_user(user), "token": session.token}
+
+
+@app.post("/auth/login")
+def auth_login(payload: dict = Body(...), db: Session = Depends(get_db)):
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "")
+    user = db.query(models.User).filter(func.lower(models.User.username) == username.lower()).first()
+    if not user or not verify_password(password, user.password_hash):
+        return {"error": "Invalid username or password"}
+    if str(user.is_active or "true").lower() != "true":
+        return {"error": "User is inactive"}
+
+    session = create_user_session(db, user)
+    db.commit()
+    return {"user": serialize_user(user), "token": session.token}
+
+
+@app.get("/auth/me")
+def auth_me(user: models.User = Depends(get_current_user)):
+    return {"user": serialize_user(user)}
+
+
+@app.post("/auth/logout")
+def auth_logout(
+    db: Session = Depends(get_db),
+    x_auth_token: str | None = Header(default=None),
+    user: models.User = Depends(get_current_user)
+):
+    session = get_active_session(db, x_auth_token)
+    if session:
+        db.delete(session)
+        db.commit()
+    return {"status": "ok"}
+
+
+@app.get("/auth/users")
+def auth_list_users(db: Session = Depends(get_db), user: models.User = Depends(require_owner)):
+    users = db.query(models.User).order_by(models.User.username.asc()).all()
+    return {"results": [serialize_user(item) for item in users]}
+
+
+@app.post("/auth/users")
+def auth_create_user(payload: dict = Body(...), db: Session = Depends(get_db), user: models.User = Depends(require_owner)):
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "")
+    display_name = str(payload.get("display_name") or username).strip()
+    role = str(payload.get("role") or ROLE_STAFF).strip().upper()
+
+    if len(username) < 3:
+        return {"error": "Username must be at least 3 characters"}
+    if len(password) < 4:
+        return {"error": "Password must be at least 4 characters"}
+    if role not in [ROLE_OWNER, ROLE_STAFF]:
+        return {"error": "Role must be OWNER or STAFF"}
+    existing = db.query(models.User).filter(func.lower(models.User.username) == username.lower()).first()
+    if existing:
+        return {"error": "Username already exists"}
+
+    new_user = models.User(
+        id=uuid4(),
+        username=username,
+        password_hash=hash_password(password),
+        role=role,
+        display_name=display_name,
+        is_active="true"
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"user": serialize_user(new_user)}
 
 
 TEMPLATES = {
@@ -3709,7 +3945,7 @@ def create_payment_receipt(payload: dict = Body(...), db: Session = Depends(get_
 
 
 @app.put("/payment-receipts/{receipt_id}")
-def update_payment_receipt(receipt_id: UUID, payload: dict = Body(...), db: Session = Depends(get_db)):
+def update_payment_receipt(receipt_id: UUID, payload: dict = Body(...), db: Session = Depends(get_db), user: models.User = Depends(require_owner)):
     receipt = db.query(models.PaymentReceipt).filter(models.PaymentReceipt.id == receipt_id).first()
     if not receipt:
         return {"error": "Payment receipt not found"}
@@ -4024,7 +4260,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db))
 
 
 @app.put("/retail-bills/{bill_id}")
-def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = Depends(get_db)):
+def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = Depends(get_db), user: models.User = Depends(require_owner)):
     bill = db.query(models.RetailBill).filter(models.RetailBill.id == bill_id).first()
     if not bill:
         return {"error": "Retail bill not found"}
@@ -4257,7 +4493,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
 
 
 @app.get("/daily-sheet")
-def daily_sheet(date: str, sheet_type: str = "stock", db: Session = Depends(get_db)):
+def daily_sheet(date: str, sheet_type: str = "stock", db: Session = Depends(get_db), user: models.User = Depends(require_owner)):
     target_date = parse_input_date(date)
     if not target_date:
         return {"error": "Invalid date format"}
