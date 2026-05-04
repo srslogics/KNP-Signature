@@ -23,6 +23,7 @@ function updateAuthUi() {
   const authMeta = document.getElementById("authMeta");
   const authButton = document.getElementById("authButton");
   const dailySheetMenu = document.getElementById("menu-daily-sheet");
+  const accessControlMenu = document.getElementById("menu-access-control");
 
   if (authMeta) {
     authMeta.textContent = currentUser
@@ -36,6 +37,10 @@ function updateAuthUi() {
 
   if (dailySheetMenu) {
     dailySheetMenu.style.display = isOwner() ? "" : "none";
+  }
+
+  if (accessControlMenu) {
+    accessControlMenu.style.display = isOwner() ? "" : "none";
   }
 }
 
@@ -251,6 +256,10 @@ function loadPage(page) {
     }
     if (page === "daily-sheet" && !isOwner()) {
       showToast("Daily Sheet is only for owner");
+      return;
+    }
+    if (page === "access-control" && !isOwner()) {
+      showToast("Access Control is only for owner");
       return;
     }
     currentPage = page;
@@ -480,26 +489,6 @@ function loadPage(page) {
             </div>
           </div>
 
-          ${isOwner() ? `
-            <div class="card toolbar dashboard-toolbar">
-              <div class="dashboard-toolbar-copy">
-                <span>Access Control</span>
-                <h3>Create staff users and keep editing rights with owner only</h3>
-              </div>
-              <div class="report-form auth-form auth-inline-form">
-                <input type="text" id="newUserDisplayName" placeholder="Display name">
-                <input type="text" id="newUsername" placeholder="Username">
-                <input type="password" id="newUserPassword" placeholder="Password">
-                <select id="newUserRole">
-                  <option value="STAFF">Staff</option>
-                  <option value="OWNER">Owner</option>
-                </select>
-                <button onclick="createAppUser()">Add User</button>
-              </div>
-              <div id="userAccessList" class="upload-box directory-intro">Loading users...</div>
-            </div>
-          ` : ""}
-
           <div class="dashboard-kpi-grid">
             <div class="dashboard-kpi-card tone-blue">
               <span>Today's Revenue</span>
@@ -656,8 +645,59 @@ function loadPage(page) {
       setTimeout(() => {
         const today = formatDateInput(new Date());
         document.getElementById("dashboardDate").value = today;
-        if (isOwner()) loadUserAccessList();
         loadDashboard();
+      }, 100);
+    }
+
+    // --- Access Control Page
+    else if (page === "access-control") {
+      title.innerText = "Access Control";
+
+      content.innerHTML = `
+        <div class="container">
+
+          <div class="page-intro">
+            <span>Owner Only</span>
+            <h2>Create staff users and keep editing rights with owner only</h2>
+          </div>
+
+          <div class="section">
+            <div class="section-head">
+              <div>
+                <span>User Management</span>
+                <h2>Add App User</h2>
+              </div>
+            </div>
+
+            <div class="upload-box">
+              <div class="report-form auth-form auth-inline-form">
+                <input type="text" id="newUserDisplayName" placeholder="Display name">
+                <input type="text" id="newUsername" placeholder="Username">
+                <input type="password" id="newUserPassword" placeholder="Password">
+                <select id="newUserRole">
+                  <option value="STAFF">Staff</option>
+                  <option value="OWNER">Owner</option>
+                </select>
+                <button onclick="createAppUser()">Add User</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-head">
+              <div>
+                <span>Current Access</span>
+                <h2>Saved Users</h2>
+              </div>
+            </div>
+            <div id="userAccessList" class="upload-box directory-intro">Loading users...</div>
+          </div>
+
+        </div>
+      `;
+
+      setTimeout(() => {
+        loadUserAccessList();
       }, 100);
     }
 
