@@ -42,9 +42,7 @@ async function apiCall(url, method = "GET", body = null, headers = {}, apiOption
 
     try {
       const authToken = getAuthToken();
-      if (authToken && !url.startsWith("/auth/")) {
-        options.headers["X-Auth-Token"] = authToken;
-      } else if (authToken && url === "/auth/me") {
+      if (authToken) {
         options.headers["X-Auth-Token"] = authToken;
       }
 
