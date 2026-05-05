@@ -1093,7 +1093,8 @@ function renderPaymentReceiptPreview(receipt, isDraft = false) {
   preview.innerHTML = getPaymentReceiptMarkup(receipt);
 }
 
-async function saveRetailBill() {
+async function saveRetailBill(options = {}) {
+  const { autoStartNext = false } = options;
   const draft = buildRetailBillFromForm(retailBillingMode);
 
   if (!draft.date) {
@@ -1147,6 +1148,9 @@ async function saveRetailBill() {
     if (retailBillingMode === "dressed") {
       await loadDressedStock();
     }
+    if (autoStartNext) {
+      startNextRetailBill();
+    }
     return currentRetailBill;
   } catch (e) {
     console.error(e);
@@ -1187,7 +1191,8 @@ function populatePaymentReceiptForm(receipt) {
   renderPaymentReceiptPreview(currentPaymentReceipt);
 }
 
-async function savePaymentReceipt() {
+async function savePaymentReceipt(options = {}) {
+  const { autoStartNext = false } = options;
   const draft = buildPaymentReceiptFromForm();
 
   if (!draft.date) {
@@ -1223,6 +1228,9 @@ async function savePaymentReceipt() {
     renderPaymentReceiptPreview(currentPaymentReceipt);
     showToast(`Payment receipt ${currentPaymentReceipt.receipt_number} ${isEditing ? "updated" : "saved"}`);
     await loadPaymentReceipts();
+    if (autoStartNext) {
+      startNextPaymentReceipt();
+    }
     return currentPaymentReceipt;
   } catch (e) {
     console.error(e);
@@ -1465,11 +1473,31 @@ async function openRetailBill(billId) {
   }
 }
 
+function startNextPaymentReceipt() {
+  resetPaymentReceiptForm();
+}
+
+function startNextRetailBill() {
+  const nextMode = retailBillingMode === "dressed" ? "dressed" : "regular";
+  const regularDate = retailField("regular", "date");
+  const nextDate = regularDate?.value || formatDateInput(new Date());
+
+  currentRetailBill = null;
+  retailDraftDirty = false;
+  retailBillCompleted = true;
+  resetRetailForm();
+
+  retailField("regular", "date").value = nextDate;
+  setRetailBillingMode(nextMode);
+  refreshRetailBillNumber(nextMode);
+  scheduleRetailPreviewRender();
+}
+
 async function printCurrentRetailBill() {
   let bill = currentRetailBill;
 
   if (!bill || retailDraftDirty || !isCurrentRetailBillForActiveMode()) {
-    bill = await saveRetailBill();
+    bill = await saveRetailBill({ autoStartNext: false });
   }
 
   if (!bill || !(bill.items || []).length) {
@@ -1597,7 +1625,7 @@ async function sendCurrentRetailBill() {
   let bill = currentRetailBill;
 
   if (!bill || retailDraftDirty || !isCurrentRetailBillForActiveMode()) {
-    bill = await saveRetailBill();
+    bill = await saveRetailBill({ autoStartNext: false });
   }
 
   if (!bill || !(bill.items || []).length) {
@@ -1668,7 +1696,7 @@ async function sendCurrentRetailBill() {
 async function printCurrentPaymentReceipt() {
   let receipt = currentPaymentReceipt;
   if (!receipt || paymentReceiptDraftDirty) {
-    receipt = await savePaymentReceipt();
+    receipt = await savePaymentReceipt({ autoStartNext: false });
   }
 
   if (!receipt || Number(receipt.amount || 0) <= 0) {
@@ -1730,7 +1758,7 @@ function getPaymentReceiptShareText(receipt) {
 async function sendCurrentPaymentReceipt() {
   let receipt = currentPaymentReceipt;
   if (!receipt || paymentReceiptDraftDirty) {
-    receipt = await savePaymentReceipt();
+    receipt = await savePaymentReceipt({ autoStartNext: false });
   }
 
   if (!receipt || Number(receipt.amount || 0) <= 0) {
@@ -2462,6 +2490,7 @@ function shouldQueueRetailOffline(error) {
 function computeNextRetailBillNumber(date, baseline = "1") {
   const pendingBills = getPendingRetailBills();
   const maxPending = pendingBills.reduce((maxValue, bill) => {
+    if ((bill.date || "") !== String(date || "")) return maxValue;
     const digits = Number(String(bill.bill_number || "").replace(/\D/g, "")) || 0;
     return Math.max(maxValue, digits);
   }, 0);

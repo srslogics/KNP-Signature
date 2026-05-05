@@ -3641,8 +3641,12 @@ def next_retail_bill_number(date: str, db: Session = Depends(get_db)):
     if not target_date:
         return {"error": "Invalid date format"}
 
-    bill_numbers = db.query(models.RetailBill.bill_number).all()
-    receipt_numbers = db.query(models.PaymentReceipt.receipt_number).all()
+    bill_numbers = db.query(models.RetailBill.bill_number).filter(
+        models.RetailBill.date == target_date
+    ).all()
+    receipt_numbers = db.query(models.PaymentReceipt.receipt_number).filter(
+        models.PaymentReceipt.date == target_date
+    ).all()
 
     max_number = 0
     for row in list(bill_numbers) + list(receipt_numbers):
@@ -3707,8 +3711,12 @@ def next_payment_receipt_number(date: str, db: Session = Depends(get_db)):
     if not target_date:
         return {"error": "Invalid date format"}
 
-    receipt_numbers = db.query(models.PaymentReceipt.receipt_number).all()
-    bill_numbers = db.query(models.RetailBill.bill_number).all()
+    receipt_numbers = db.query(models.PaymentReceipt.receipt_number).filter(
+        models.PaymentReceipt.date == target_date
+    ).all()
+    bill_numbers = db.query(models.RetailBill.bill_number).filter(
+        models.RetailBill.date == target_date
+    ).all()
 
     max_number = 0
     for row in list(receipt_numbers) + list(bill_numbers):
