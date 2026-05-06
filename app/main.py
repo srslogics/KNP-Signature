@@ -3893,9 +3893,11 @@ def create_payment_receipt(payload: dict = Body(...), db: Session = Depends(get_
         receipt_number = next_number.get("receipt_number", "1")
 
     existing = db.query(models.PaymentReceipt).filter(
+        models.PaymentReceipt.date == target_date,
         models.PaymentReceipt.receipt_number == receipt_number
     ).first()
     existing_bill = db.query(models.RetailBill).filter(
+        models.RetailBill.date == target_date,
         models.RetailBill.bill_number == receipt_number
     ).first()
     if existing or existing_bill:
@@ -4069,9 +4071,11 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db))
         bill_number = next_number.get("bill_number", "1")
 
     existing = db.query(models.RetailBill).filter(
+        models.RetailBill.date == target_date,
         models.RetailBill.bill_number == bill_number
     ).first()
     existing_receipt = db.query(models.PaymentReceipt).filter(
+        models.PaymentReceipt.date == target_date,
         models.PaymentReceipt.receipt_number == bill_number
     ).first()
     if existing or existing_receipt:
@@ -4286,10 +4290,12 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
         return {"error": "Bill number is required"}
 
     existing = db.query(models.RetailBill).filter(
+        models.RetailBill.date == target_date,
         models.RetailBill.bill_number == bill_number,
         models.RetailBill.id != bill.id
     ).first()
     existing_receipt = db.query(models.PaymentReceipt).filter(
+        models.PaymentReceipt.date == target_date,
         models.PaymentReceipt.receipt_number == bill_number
     ).first()
     if existing or existing_receipt:
