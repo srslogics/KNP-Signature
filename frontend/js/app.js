@@ -800,11 +800,14 @@ function loadPage(page) {
                     <input type="date" id="retailDate" aria-label="Retail bill date">
                     <input type="text" id="retailBillNumber" placeholder="Bill no">
                     <input type="text" id="retailCashier" placeholder="Cashier name" value="admin">
-                    <select id="retailSettlementType">
-                      <option value="paid">Paid in Full</option>
-                      <option value="partial">Part Payment</option>
-                      <option value="credit">Credit</option>
-                    </select>
+                    <div class="billing-priority-field">
+                      <span class="billing-priority-label">Settlement</span>
+                      <select id="retailSettlementType">
+                        <option value="paid">Paid in Full</option>
+                        <option value="partial">Part Payment</option>
+                        <option value="credit">Credit</option>
+                      </select>
+                    </div>
                     <select id="retailPaymentMode">
                       <option value="Cash">Cash</option>
                       <option value="Online">Online</option>
