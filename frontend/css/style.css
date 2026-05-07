@@ -982,7 +982,8 @@ input[type="file"] {
 .billing-priority-field {
   display: grid;
   gap: 6px;
-  align-self: stretch;
+  align-self: end;
+  min-width: 0;
 }
 
 .billing-priority-label {
@@ -992,22 +993,24 @@ input[type="file"] {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  padding-left: 2px;
+  line-height: 1;
 }
 
 #retailSettlementType {
-  min-height: 54px;
+  min-height: 42px;
   border: 1.5px solid rgb(183 121 31 / 0.32);
-  border-radius: 16px;
+  border-radius: 12px;
   background: linear-gradient(180deg, #fff9f0 0%, #ffffff 100%);
   color: #1b2836;
-  font-size: 16px;
-  font-weight: 750;
-  box-shadow: 0 0 0 4px rgb(183 121 31 / 0.08);
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: 0 0 0 3px rgb(183 121 31 / 0.08);
 }
 
 #retailSettlementType:focus-visible {
   outline: 3px solid rgb(183 121 31 / 0.22);
-  box-shadow: 0 0 0 6px rgb(183 121 31 / 0.12);
+  box-shadow: 0 0 0 5px rgb(183 121 31 / 0.12);
 }
 
 .retail-notes-grid {

@@ -1574,6 +1574,7 @@ async function printCurrentRetailBill() {
   currentRetailBill = bill;
   retailDraftDirty = false;
   retailBillCompleted = true;
+  startNextRetailBill();
 }
 
 function getRetailBillShareText(bill) {
@@ -1646,6 +1647,7 @@ async function sendCurrentRetailBill() {
         files: [imageFile]
       });
       showToast("Bill image shared");
+      startNextRetailBill();
       return;
     }
 
@@ -1660,6 +1662,7 @@ async function sendCurrentRetailBill() {
     const whatsappTarget = customerPhone ? `https://wa.me/${customerPhone}` : `https://wa.me/`;
     window.open(whatsappTarget, "_blank", "noopener,noreferrer");
     showToast("Receipt image downloaded. Attach it in WhatsApp.");
+    startNextRetailBill();
     return;
   } catch (e) {
     console.error("Image share failed", e);
@@ -1672,6 +1675,7 @@ async function sendCurrentRetailBill() {
         text: shareText
       });
       showToast("Bill shared");
+      startNextRetailBill();
       return;
     }
   } catch (e) {
@@ -1691,6 +1695,7 @@ async function sendCurrentRetailBill() {
   const whatsappTarget = customerPhone ? `https://wa.me/${customerPhone}?text=${encodeURIComponent(shareText)}` : `https://wa.me/?text=${encodeURIComponent(shareText)}`;
   window.open(whatsappTarget, "_blank", "noopener,noreferrer");
   showToast(customerPhone ? "Bill copied and WhatsApp opened" : "Bill text copied. Add receiver and send");
+  startNextRetailBill();
 }
 
 async function printCurrentPaymentReceipt() {
@@ -1737,6 +1742,7 @@ async function printCurrentPaymentReceipt() {
   currentPaymentReceipt = receipt;
   paymentReceiptDraftDirty = false;
   paymentReceiptCompleted = true;
+  startNextPaymentReceipt();
 }
 
 function getPaymentReceiptShareText(receipt) {
@@ -1779,6 +1785,7 @@ async function sendCurrentPaymentReceipt() {
         files: [imageFile]
       });
       showToast("Payment receipt image shared");
+      startNextPaymentReceipt();
       return;
     }
 
@@ -1793,6 +1800,7 @@ async function sendCurrentPaymentReceipt() {
     const whatsappTarget = partyPhone ? `https://wa.me/${partyPhone}` : `https://wa.me/`;
     window.open(whatsappTarget, "_blank", "noopener,noreferrer");
     showToast("Receipt image downloaded. Attach it in WhatsApp.");
+    startNextPaymentReceipt();
     return;
   } catch (e) {
     console.error("Payment receipt image share failed", e);
@@ -1805,6 +1813,7 @@ async function sendCurrentPaymentReceipt() {
         text: shareText
       });
       showToast("Payment receipt shared");
+      startNextPaymentReceipt();
       return;
     }
   } catch (e) {
@@ -1824,6 +1833,7 @@ async function sendCurrentPaymentReceipt() {
   const whatsappTarget = partyPhone ? `https://wa.me/${partyPhone}?text=${encodeURIComponent(shareText)}` : `https://wa.me/?text=${encodeURIComponent(shareText)}`;
   window.open(whatsappTarget, "_blank", "noopener,noreferrer");
   showToast(partyPhone ? "Payment receipt copied and WhatsApp opened" : "Receipt text copied. Add receiver and send");
+  startNextPaymentReceipt();
 }
 
 function resetPaymentReceiptForm() {
