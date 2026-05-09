@@ -4172,6 +4172,8 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db))
     if outstanding_amount > 0 and payment_mode.strip().upper() == "CASH":
         payment_mode = "Credit"
 
+    transaction_party_id = party_id if outstanding_amount > 0 else None
+
     bill = models.RetailBill(
         id=uuid4(),
         bill_number=bill_number,
@@ -4208,7 +4210,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db))
         transaction_category = "RETAIL DRESSED" if item["line_type"] == "DRESSED" else "RETAIL"
         db.add(models.Transaction(
             date=target_date,
-            party_id=party_id,
+            party_id=transaction_party_id,
             type="SALE",
             category=transaction_category,
             item_type=item["item_name"],
@@ -4224,7 +4226,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db))
     if ice_amount > 0:
         db.add(models.Transaction(
             date=target_date,
-            party_id=party_id,
+            party_id=transaction_party_id,
             type="SALE",
             category="RETAIL DRESSED" if any(item["line_type"] == "DRESSED" for item in normalized_items) else "RETAIL",
             item_type="ICE",
@@ -4392,6 +4394,8 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
     if outstanding_amount > 0 and payment_mode.strip().upper() == "CASH":
         payment_mode = "Credit"
 
+    transaction_party_id = party_id if outstanding_amount > 0 else None
+
     previous_date = bill.date
 
     bill.bill_number = bill_number
@@ -4436,7 +4440,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
         transaction_category = "RETAIL DRESSED" if item["line_type"] == "DRESSED" else "RETAIL"
         db.add(models.Transaction(
             date=target_date,
-            party_id=party_id,
+            party_id=transaction_party_id,
             type="SALE",
             category=transaction_category,
             item_type=item["item_name"],
@@ -4452,7 +4456,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
     if ice_amount > 0:
         db.add(models.Transaction(
             date=target_date,
-            party_id=party_id,
+            party_id=transaction_party_id,
             type="SALE",
             category="RETAIL DRESSED" if any(item["line_type"] == "DRESSED" for item in normalized_items) else "RETAIL",
             item_type="ICE",
