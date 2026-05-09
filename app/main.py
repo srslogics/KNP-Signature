@@ -974,9 +974,53 @@ def retail_party_balance_after(db: Session, party_id):
         models.Transaction.date.asc(),
         models.Transaction.created_at.asc()
     ).all()
+    txns = filter_party_ledger_transactions(db, txns)
 
     balance_after, _ = build_ledger(txns)
     return float(balance_after or 0)
+
+
+def filter_party_ledger_transactions(db: Session, txns):
+    if not txns:
+        return txns
+
+    retail_keys = {
+        (txn.date, txn.party_id, str(txn.bill_number or "").strip())
+        for txn in txns
+        if txn.party_id
+        and str(txn.bill_number or "").strip()
+        and txn.type == "SALE"
+        and (txn.category or "").upper() in ["RETAIL", "RETAIL DRESSED"]
+    }
+
+    if not retail_keys:
+        return txns
+
+    retail_dates = {key[0] for key in retail_keys}
+    retail_parties = {key[1] for key in retail_keys}
+    retail_bill_numbers = {key[2] for key in retail_keys}
+
+    paid_bill_keys = {
+        (bill.date, bill.party_id, str(bill.bill_number or "").strip())
+        for bill in db.query(models.RetailBill).filter(
+            models.RetailBill.party_id.in_(list(retail_parties)),
+            models.RetailBill.date.in_(list(retail_dates)),
+            models.RetailBill.bill_number.in_(list(retail_bill_numbers)),
+            models.RetailBill.outstanding_amount <= 0
+        ).all()
+    }
+
+    if not paid_bill_keys:
+        return txns
+
+    return [
+        txn for txn in txns
+        if not (
+            txn.type == "SALE" and
+            (txn.category or "").upper() in ["RETAIL", "RETAIL DRESSED"] and
+            (txn.date, txn.party_id, str(txn.bill_number or "").strip()) in paid_bill_keys
+        )
+    ]
 
 
 def serialize_payment_receipt(receipt, balance_after=None):
@@ -2639,6 +2683,7 @@ def get_party_ledger(
 
     # --- Fetch transactions ---
     txns = query.order_by(models.Transaction.date.asc()).all()
+    txns = filter_party_ledger_transactions(db, txns)
 
     if not txns:
         return {
@@ -2875,6 +2920,7 @@ def get_ledger_by_name(
 
     party = db.query(models.Party).filter_by(id=party_id).first()
     txns = query.order_by(models.Transaction.date.asc()).all()
+    txns = filter_party_ledger_transactions(db, txns)
 
     if not txns:
         return {
@@ -2919,6 +2965,7 @@ def get_party_detail(name: str, db: Session = Depends(get_db)):
     txns = db.query(models.Transaction).filter_by(
         party_id=party.id
     ).order_by(models.Transaction.date.asc()).all()
+    txns = filter_party_ledger_transactions(db, txns)
 
     balance, ledger = build_ledger(txns)
 
@@ -2978,6 +3025,7 @@ def export_report(
             query = query.filter(models.Transaction.date <= end)
 
         txns = query.order_by(models.Transaction.date.asc()).all()
+        txns = filter_party_ledger_transactions(db, txns)
         balance, ledger = build_ledger(txns)
         rows = [
             {
