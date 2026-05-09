@@ -54,9 +54,25 @@ async function downloadReport(format) {
 
   try {
     toggleButtons(true);
+    const headers = {};
+    const authToken = typeof getAuthToken === "function" ? getAuthToken() : "";
+    if (authToken) {
+      headers["X-Auth-Token"] = authToken;
+    }
+
     const response = await withLoading("Preparing report...", () => (
-      fetch(`${BASE_URL}/reports/export?${params.toString()}`)
+      fetchWithRetry(
+        `${BASE_URL}/reports/export?${params.toString()}`,
+        { headers }
+      )
     ));
+
+    if (response.status === 401) {
+      if (typeof clearAuthState === "function") {
+        clearAuthState();
+      }
+      throw new Error("AUTH_REQUIRED");
+    }
 
     if (!response.ok) {
       throw new Error(`Report failed: ${response.status}`);
