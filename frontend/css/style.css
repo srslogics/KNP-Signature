@@ -1794,12 +1794,12 @@ tbody tr:hover {
 }
 
 .credit {
-  color: var(--success);
+  color: #1f7a5c;
   font-weight: 750;
 }
 
 .debit {
-  color: var(--danger);
+  color: #b64a3d;
   font-weight: 750;
 }
 
