@@ -718,7 +718,7 @@ function loadPage(page) {
 
           <div class="card search-card toolbar">
             <div class="typeahead-field">
-              <input type="text" id="party" placeholder="Search party..." list="partySuggestions" autocomplete="off" oninput="suggestParties()" onfocus="suggestParties()" onblur="scheduleSuggestionBoxHide('ledgerPartySuggestBox')">
+              <input type="text" id="party" placeholder="Search party..." autocomplete="off" oninput="suggestParties()" onfocus="suggestParties()" onblur="scheduleSuggestionBoxHide('ledgerPartySuggestBox')">
               <div id="ledgerPartySuggestBox" class="typeahead-box"></div>
             </div>
             <datalist id="partySuggestions"></datalist>
@@ -821,7 +821,7 @@ function loadPage(page) {
                       <option value="Credit">Credit</option>
                     </select>
                     <div class="typeahead-field">
-                      <input type="text" id="retailCustomerName" placeholder="Customer name (optional)" list="retailCustomerSuggestions" autocomplete="off" oninput="suggestRetailCustomers()" onfocus="suggestRetailCustomers()">
+                      <input type="text" id="retailCustomerName" placeholder="Customer name (optional)" autocomplete="off" oninput="suggestRetailCustomers()" onfocus="suggestRetailCustomers()">
                       <div id="retailCustomerSuggestBox" class="typeahead-box"></div>
                     </div>
                     <input type="text" id="retailCustomerPhone" placeholder="Phone (optional)">
@@ -897,7 +897,7 @@ function loadPage(page) {
                     <option value="Cheque">Cheque</option>
                   </select>
                   <div class="typeahead-field">
-                    <input type="text" id="paymentReceiptPartyName" placeholder="Party name" list="paymentReceiptPartySuggestions" autocomplete="off" oninput="suggestPaymentReceiptParties()" onfocus="suggestPaymentReceiptParties()">
+                    <input type="text" id="paymentReceiptPartyName" placeholder="Party name" autocomplete="off" oninput="suggestPaymentReceiptParties()" onfocus="suggestPaymentReceiptParties()">
                     <div id="paymentReceiptPartySuggestBox" class="typeahead-box"></div>
                   </div>
                   <datalist id="paymentReceiptPartySuggestions"></datalist>
@@ -1226,7 +1226,7 @@ function loadPage(page) {
               </select>
 
               <div class="typeahead-field">
-                <input type="text" id="reportParty" placeholder="Party name" list="reportPartySuggestions" autocomplete="off" oninput="suggestReportParties()" onfocus="suggestReportParties()" onblur="scheduleSuggestionBoxHide('reportPartySuggestBox')">
+                <input type="text" id="reportParty" placeholder="Party name" autocomplete="off" oninput="suggestReportParties()" onfocus="suggestReportParties()" onblur="scheduleSuggestionBoxHide('reportPartySuggestBox')">
                 <div id="reportPartySuggestBox" class="typeahead-box"></div>
               </div>
               <datalist id="reportPartySuggestions"></datalist>

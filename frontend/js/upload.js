@@ -242,7 +242,7 @@ function removeManualEntryRow(button) {
 function addDealerEntryRow() {
   createManualRow("dealerEntryRows", `
     <div class="typeahead-field">
-      <input type="text" class="dealerParty" placeholder="Dealer name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+      <input type="text" class="dealerParty" placeholder="Dealer name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
       <div class="typeahead-box manual-party-suggest-box"></div>
     </div>
     <input type="text" class="dealerBillNo" placeholder="Bill no. (optional)">
@@ -257,7 +257,7 @@ function addDealerEntryRow() {
 function addVendorEntryRow() {
   createManualRow("vendorEntryRows", `
     <div class="typeahead-field">
-      <input type="text" class="vendorParty" placeholder="Vendor name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+      <input type="text" class="vendorParty" placeholder="Vendor name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
       <div class="typeahead-box manual-party-suggest-box"></div>
     </div>
     <input type="text" class="vendorCategory" placeholder="Category (optional)">
@@ -272,7 +272,7 @@ function addVendorEntryRow() {
 function addPaymentEntryRow() {
   createManualRow("paymentEntryRows", `
     <div class="typeahead-field">
-      <input type="text" class="paymentParty" placeholder="Party name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+      <input type="text" class="paymentParty" placeholder="Party name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
       <div class="typeahead-box manual-party-suggest-box"></div>
     </div>
     <input type="number" class="paymentAmount" placeholder="Amount" min="0" step="0.01">
@@ -302,7 +302,7 @@ function addMortalityEntryRow() {
 function addOpeningBalanceEntryRow() {
   createManualRow("openingBalanceEntryRows", `
     <div class="typeahead-field">
-      <input type="text" class="openingBalanceParty" placeholder="Party name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+      <input type="text" class="openingBalanceParty" placeholder="Party name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
       <div class="typeahead-box manual-party-suggest-box"></div>
     </div>
     <input type="number" class="openingBalanceAmount" placeholder="Opening balance" min="0" step="0.01">
