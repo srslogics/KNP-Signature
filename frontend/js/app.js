@@ -322,7 +322,10 @@ function loadPage(page) {
               <select id="directoryPartySelect" onchange="selectDirectoryParty(this.value)">
                 <option value="">Select saved party</option>
               </select>
-              <input type="text" id="directoryPartyName" placeholder="Name">
+              <div class="typeahead-field">
+                <input type="text" id="directoryPartyName" placeholder="Name" autocomplete="off">
+                <div id="directoryPartySuggestBox" class="typeahead-box"></div>
+              </div>
               <input type="text" id="directoryPartyPhone" placeholder="Phone number">
               <input type="text" id="directoryPartyAddress" placeholder="Address (optional)">
               <select id="directoryPartyType">
@@ -714,7 +717,10 @@ function loadPage(page) {
           </div>
 
           <div class="card search-card toolbar">
-            <input type="text" id="party" placeholder="Search party..." list="partySuggestions" autocomplete="off" oninput="suggestParties()">
+            <div class="typeahead-field">
+              <input type="text" id="party" placeholder="Search party..." list="partySuggestions" autocomplete="off" oninput="suggestParties()" onfocus="suggestParties()" onblur="scheduleSuggestionBoxHide('ledgerPartySuggestBox')">
+              <div id="ledgerPartySuggestBox" class="typeahead-box"></div>
+            </div>
             <datalist id="partySuggestions"></datalist>
             <input type="date" id="ledgerStartDate" aria-label="Ledger start date">
             <input type="date" id="ledgerEndDate" aria-label="Ledger end date">
@@ -1219,7 +1225,10 @@ function loadPage(page) {
                 <option value="inventory">Inventory & Leakage</option>
               </select>
 
-              <input type="text" id="reportParty" placeholder="Party name" list="reportPartySuggestions" autocomplete="off" oninput="suggestReportParties()">
+              <div class="typeahead-field">
+                <input type="text" id="reportParty" placeholder="Party name" list="reportPartySuggestions" autocomplete="off" oninput="suggestReportParties()" onfocus="suggestReportParties()" onblur="scheduleSuggestionBoxHide('reportPartySuggestBox')">
+                <div id="reportPartySuggestBox" class="typeahead-box"></div>
+              </div>
               <datalist id="reportPartySuggestions"></datalist>
 
               <input type="date" id="reportStartDate" aria-label="Report start date">

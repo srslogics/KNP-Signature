@@ -1219,7 +1219,7 @@ input[type="file"] {
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  z-index: 30;
+  z-index: 120;
   display: none;
   background: #fff;
   border: 1px solid var(--line);
@@ -1235,7 +1235,7 @@ input[type="file"] {
   border: none;
   background: transparent;
   text-align: left;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: 10px;
   cursor: pointer;
   display: flex;

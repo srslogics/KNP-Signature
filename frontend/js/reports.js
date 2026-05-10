@@ -108,6 +108,7 @@ async function downloadReport(format) {
 function suggestReportParties() {
   const input = document.getElementById("reportParty");
   const suggestions = document.getElementById("reportPartySuggestions");
+  const boxId = "reportPartySuggestBox";
   const name = input?.value.trim();
 
   if (!suggestions) return;
@@ -116,6 +117,7 @@ function suggestReportParties() {
 
   if (!name || name.length < 2) {
     suggestions.innerHTML = "";
+    if (typeof hideSuggestionBox === "function") hideSuggestionBox(boxId);
     return;
   }
 
@@ -124,15 +126,24 @@ function suggestReportParties() {
       const data = await apiCall(`/party/search?name=${encodeURIComponent(name)}`);
       suggestions.innerHTML = "";
 
-      (data.results || []).forEach(party => {
+      const results = data.results || [];
+      results.forEach(party => {
         const option = document.createElement("option");
         option.value = party.name;
         option.label = party.type ? `${party.name} (${party.type})` : party.name;
         suggestions.appendChild(option);
       });
+
+      if (typeof renderPartySuggestionBox === "function") {
+        renderPartySuggestionBox(boxId, results, party => {
+          if (input) input.value = party.name;
+          if (typeof hideSuggestionBox === "function") hideSuggestionBox(boxId);
+        });
+      }
     } catch (e) {
       console.error(e);
       suggestions.innerHTML = "";
+      if (typeof hideSuggestionBox === "function") hideSuggestionBox(boxId);
     }
   }, 250);
 }

@@ -405,7 +405,7 @@ function hideSuggestionBox(boxId) {
 
 function scheduleSuggestionBoxHide(boxId) {
   clearTimeout(retailSuggestHideTimer);
-  retailSuggestHideTimer = setTimeout(() => hideSuggestionBox(boxId), 120);
+  retailSuggestHideTimer = setTimeout(() => hideSuggestionBox(boxId), 220);
 }
 
 function getCachedPartyProfile(name) {

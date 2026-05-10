@@ -206,8 +206,11 @@ function initPartyDirectory() {
   const nameInput = document.getElementById("directoryPartyName");
   if (!nameInput) return;
 
+  nameInput.addEventListener("input", suggestDirectoryParties);
+  nameInput.addEventListener("focus", suggestDirectoryParties);
   nameInput.addEventListener("change", () => hydrateDirectoryPartyForm(nameInput.value));
   nameInput.addEventListener("blur", () => hydrateDirectoryPartyForm(nameInput.value));
+  nameInput.addEventListener("blur", () => scheduleUploadPartySuggestionHide(document.getElementById("directoryPartySuggestBox")));
 }
 
 function createManualRow(containerId, html) {
@@ -238,7 +241,10 @@ function removeManualEntryRow(button) {
 
 function addDealerEntryRow() {
   createManualRow("dealerEntryRows", `
-    <input type="text" class="dealerParty" placeholder="Dealer name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)">
+    <div class="typeahead-field">
+      <input type="text" class="dealerParty" placeholder="Dealer name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+      <div class="typeahead-box manual-party-suggest-box"></div>
+    </div>
     <input type="text" class="dealerBillNo" placeholder="Bill no. (optional)">
     <input type="text" class="dealerItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)">
     <input type="number" class="dealerNag" placeholder="NAG" min="0" step="1">
@@ -250,7 +256,10 @@ function addDealerEntryRow() {
 
 function addVendorEntryRow() {
   createManualRow("vendorEntryRows", `
-    <input type="text" class="vendorParty" placeholder="Vendor name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)">
+    <div class="typeahead-field">
+      <input type="text" class="vendorParty" placeholder="Vendor name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+      <div class="typeahead-box manual-party-suggest-box"></div>
+    </div>
     <input type="text" class="vendorCategory" placeholder="Category (optional)">
     <input type="text" class="vendorItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)">
     <input type="number" class="vendorNag" placeholder="NAG" min="0" step="1">
@@ -262,7 +271,10 @@ function addVendorEntryRow() {
 
 function addPaymentEntryRow() {
   createManualRow("paymentEntryRows", `
-    <input type="text" class="paymentParty" placeholder="Party name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)">
+    <div class="typeahead-field">
+      <input type="text" class="paymentParty" placeholder="Party name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+      <div class="typeahead-box manual-party-suggest-box"></div>
+    </div>
     <input type="number" class="paymentAmount" placeholder="Amount" min="0" step="0.01">
     <select class="paymentMode">
       <option value="Cash">Cash</option>
@@ -289,7 +301,10 @@ function addMortalityEntryRow() {
 
 function addOpeningBalanceEntryRow() {
   createManualRow("openingBalanceEntryRows", `
-    <input type="text" class="openingBalanceParty" placeholder="Party name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)">
+    <div class="typeahead-field">
+      <input type="text" class="openingBalanceParty" placeholder="Party name" list="manualPartySuggestions" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+      <div class="typeahead-box manual-party-suggest-box"></div>
+    </div>
     <input type="number" class="openingBalanceAmount" placeholder="Opening balance" min="0" step="0.01">
     <select class="openingBalanceType">
       <option value="RECEIVABLE">Receivable</option>
@@ -424,6 +439,46 @@ function submitOpeningStockEntries() {
 
 let itemSuggestTimer = null;
 let manualPartySuggestTimer = null;
+let uploadPartySuggestHideTimer = null;
+
+function hideUploadPartySuggestionBox(box) {
+  if (!box) return;
+  box.innerHTML = "";
+  box.style.display = "none";
+}
+
+function scheduleUploadPartySuggestionHide(box) {
+  clearTimeout(uploadPartySuggestHideTimer);
+  uploadPartySuggestHideTimer = setTimeout(() => hideUploadPartySuggestionBox(box), 220);
+}
+
+function renderUploadPartySuggestionBox(box, parties, onPick) {
+  if (!box) return;
+  box.innerHTML = "";
+
+  if (!parties.length) {
+    box.style.display = "none";
+    return;
+  }
+
+  parties.forEach(party => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "typeahead-option";
+    button.innerHTML = `
+      <strong>${party.name}</strong>
+      ${party.phone ? `<span>${party.phone}</span>` : ""}
+    `;
+    button.onmousedown = event => {
+      event.preventDefault();
+      onPick(party);
+    };
+    box.appendChild(button);
+  });
+
+  box.style.display = "block";
+}
+
 async function suggestItems(input) {
   const suggestions = document.getElementById("itemSuggestions");
   const query = input?.value.trim() || "";
@@ -457,6 +512,7 @@ async function suggestItems(input) {
 async function suggestManualParties(input) {
   const suggestions = document.getElementById("manualPartySuggestions");
   const query = input?.value.trim() || "";
+  const box = input?.parentElement?.querySelector(".manual-party-suggest-box");
 
   if (!suggestions) return;
 
@@ -464,6 +520,7 @@ async function suggestManualParties(input) {
 
   if (query.length < 2) {
     suggestions.innerHTML = "";
+    hideUploadPartySuggestionBox(box);
     return;
   }
 
@@ -471,14 +528,59 @@ async function suggestManualParties(input) {
     try {
       const data = await optionalApiCall(`/party/search?name=${encodeURIComponent(query)}`, { results: [] });
       suggestions.innerHTML = "";
-      (data.results || []).forEach(party => {
+      const results = data.results || [];
+      results.forEach(party => {
         const option = document.createElement("option");
         option.value = party.name;
         suggestions.appendChild(option);
       });
+      renderUploadPartySuggestionBox(box, results, party => {
+        if (input) input.value = party.name;
+        hideUploadPartySuggestionBox(box);
+      });
     } catch (e) {
       console.error(e);
       suggestions.innerHTML = "";
+      hideUploadPartySuggestionBox(box);
+    }
+  }, 200);
+}
+
+async function suggestDirectoryParties() {
+  const input = document.getElementById("directoryPartyName");
+  const suggestions = document.getElementById("manualPartySuggestions");
+  const box = document.getElementById("directoryPartySuggestBox");
+  const query = input?.value.trim() || "";
+
+  if (!input || !suggestions) return;
+
+  clearTimeout(manualPartySuggestTimer);
+
+  if (query.length < 2) {
+    suggestions.innerHTML = "";
+    hideUploadPartySuggestionBox(box);
+    return;
+  }
+
+  manualPartySuggestTimer = setTimeout(async () => {
+    try {
+      const data = await optionalApiCall(`/party/search?name=${encodeURIComponent(query)}`, { results: [] });
+      suggestions.innerHTML = "";
+      const results = data.results || [];
+      results.forEach(party => {
+        const option = document.createElement("option");
+        option.value = party.name;
+        suggestions.appendChild(option);
+      });
+      renderUploadPartySuggestionBox(box, results, async party => {
+        input.value = party.name;
+        hideUploadPartySuggestionBox(box);
+        await hydrateDirectoryPartyForm(party.name);
+      });
+    } catch (e) {
+      console.error(e);
+      suggestions.innerHTML = "";
+      hideUploadPartySuggestionBox(box);
     }
   }, 200);
 }
