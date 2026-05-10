@@ -809,9 +809,9 @@ function loadPage(page) {
                     <div class="billing-priority-field">
                       <span class="billing-priority-label">Settlement</span>
                       <select id="retailSettlementType">
-                        <option value="paid">Paid in Full</option>
-                        <option value="partial">Part Payment</option>
                         <option value="credit">Credit</option>
+                        <option value="partial">Part Payment</option>
+                        <option value="paid">Full Payment</option>
                       </select>
                     </div>
                     <select id="retailPaymentMode">
