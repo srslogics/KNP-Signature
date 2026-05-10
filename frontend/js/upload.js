@@ -441,6 +441,31 @@ let itemSuggestTimer = null;
 let manualPartySuggestTimer = null;
 let uploadPartySuggestHideTimer = null;
 
+function normalizeUploadPartyName(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function dedupeUploadPartyResults(parties) {
+  const merged = new Map();
+  (parties || []).forEach(party => {
+    const key = normalizeUploadPartyName(party?.name);
+    if (!key) return;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, { ...party });
+      return;
+    }
+    merged.set(key, {
+      ...existing,
+      ...party,
+      phone: existing.phone || party.phone || "",
+      address: existing.address || party.address || "",
+      type: existing.type || party.type || ""
+    });
+  });
+  return Array.from(merged.values()).sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || "")));
+}
+
 function hideUploadPartySuggestionBox(box) {
   if (!box) return;
   box.innerHTML = "";
@@ -528,7 +553,7 @@ async function suggestManualParties(input) {
     try {
       const data = await optionalApiCall(`/party/search?name=${encodeURIComponent(query)}`, { results: [] });
       suggestions.innerHTML = "";
-      const results = data.results || [];
+      const results = dedupeUploadPartyResults(data.results || []);
       results.forEach(party => {
         const option = document.createElement("option");
         option.value = party.name;
@@ -566,7 +591,7 @@ async function suggestDirectoryParties() {
     try {
       const data = await optionalApiCall(`/party/search?name=${encodeURIComponent(query)}`, { results: [] });
       suggestions.innerHTML = "";
-      const results = data.results || [];
+      const results = dedupeUploadPartyResults(data.results || []);
       results.forEach(party => {
         const option = document.createElement("option");
         option.value = party.name;

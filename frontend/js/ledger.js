@@ -1,5 +1,26 @@
 let partySuggestTimer = null;
 
+function dedupeLedgerPartyResults(parties) {
+  const merged = new Map();
+  (parties || []).forEach(party => {
+    const key = String(party?.name || "").trim().toLowerCase().replace(/\s+/g, " ");
+    if (!key) return;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, { ...party });
+      return;
+    }
+    merged.set(key, {
+      ...existing,
+      ...party,
+      phone: existing.phone || party.phone || "",
+      address: existing.address || party.address || "",
+      type: existing.type || party.type || ""
+    });
+  });
+  return Array.from(merged.values()).sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || "")));
+}
+
 async function searchLedger() {
     const name = document.getElementById("party").value;
     const startDate = document.getElementById("ledgerStartDate")?.value;
@@ -110,7 +131,7 @@ async function searchLedger() {
         const data = await apiCall(`/party/search?name=${encodeURIComponent(name)}`);
         suggestions.innerHTML = "";
 
-        const results = data.results || [];
+        const results = dedupeLedgerPartyResults(data.results || []);
         results.forEach(party => {
           const option = document.createElement("option");
           option.value = party.name;
