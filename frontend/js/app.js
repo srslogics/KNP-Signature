@@ -2,6 +2,7 @@ let currentPage = "";
 let currentUser = null;
 let authBootstrapped = false;
 let authNeedsSetup = false;
+const ALL_OUTLETS_TOKEN = "ALL";
 
 function getStoredAuthUser() {
   try {
@@ -17,6 +18,119 @@ function isOwner() {
 
 function isStaff() {
   return String(currentUser?.role || "").toUpperCase() === "STAFF";
+}
+
+function getAccessibleOutlets() {
+  return Array.isArray(currentUser?.outlets) ? currentUser.outlets : [];
+}
+
+function canViewAllOutlets() {
+  return !!currentUser?.can_view_all_outlets;
+}
+
+function getStoredOutletId() {
+  return localStorage.getItem("STOCKPILOT_SELECTED_OUTLET_ID") || "";
+}
+
+function pageRequiresSingleOutlet(page) {
+  return ["retail", "upload", "daily-sheet"].includes(page);
+}
+
+function getSingleOutletFallback() {
+  return getAccessibleOutlets()[0]?.id || "";
+}
+
+function normalizeSelectedOutletId(page = currentPage || "dashboard") {
+  const outlets = getAccessibleOutlets();
+  if (!currentUser || !outlets.length) {
+    localStorage.removeItem("STOCKPILOT_SELECTED_OUTLET_ID");
+    return "";
+  }
+
+  const stored = getStoredOutletId();
+  const validIds = new Set(outlets.map(outlet => String(outlet.id)));
+  let selected = stored;
+
+  if (selected === ALL_OUTLETS_TOKEN && !canViewAllOutlets()) {
+    selected = "";
+  }
+
+  if (selected && selected !== ALL_OUTLETS_TOKEN && !validIds.has(String(selected))) {
+    selected = "";
+  }
+
+  if (!selected) {
+    selected = canViewAllOutlets() && !pageRequiresSingleOutlet(page)
+      ? ALL_OUTLETS_TOKEN
+      : getSingleOutletFallback();
+  }
+
+  if (pageRequiresSingleOutlet(page) && selected === ALL_OUTLETS_TOKEN) {
+    selected = getSingleOutletFallback();
+  }
+
+  if (selected) {
+    localStorage.setItem("STOCKPILOT_SELECTED_OUTLET_ID", selected);
+  }
+
+  return selected;
+}
+
+function getSelectedOutletLabel(page = currentPage || "dashboard") {
+  const selected = normalizeSelectedOutletId(page);
+  if (selected === ALL_OUTLETS_TOKEN) return "All Outlets";
+  const outlet = getAccessibleOutlets().find(entry => String(entry.id) === String(selected));
+  return outlet?.name || "";
+}
+
+function renderOutletSwitcher(page = currentPage || "dashboard") {
+  const switcher = document.getElementById("outletSwitcher");
+  if (!switcher) return;
+
+  if (!currentUser) {
+    switcher.style.display = "none";
+    switcher.innerHTML = "";
+    return;
+  }
+
+  const outlets = getAccessibleOutlets();
+  if (!outlets.length) {
+    switcher.style.display = "none";
+    switcher.innerHTML = "";
+    return;
+  }
+
+  const selected = normalizeSelectedOutletId(page);
+  const options = [];
+
+  if (canViewAllOutlets() && !pageRequiresSingleOutlet(page)) {
+    options.push(`<option value="${ALL_OUTLETS_TOKEN}">All Outlets</option>`);
+  }
+
+  options.push(...outlets.map(outlet => `<option value="${outlet.id}">${outlet.name}</option>`));
+  switcher.innerHTML = options.join("");
+  switcher.value = selected;
+  switcher.style.display = "";
+  switcher.disabled = outlets.length === 1 && !canViewAllOutlets();
+}
+
+function handleOutletChange(value) {
+  if (!currentUser) return;
+  const page = currentPage || "dashboard";
+  const nextValue = value || normalizeSelectedOutletId(page);
+
+  if (pageRequiresSingleOutlet(page) && nextValue === ALL_OUTLETS_TOKEN) {
+    const fallback = getSingleOutletFallback();
+    localStorage.setItem("STOCKPILOT_SELECTED_OUTLET_ID", fallback);
+    renderOutletSwitcher(page);
+    showToast("Choose one outlet for this page");
+    return;
+  }
+
+  localStorage.setItem("STOCKPILOT_SELECTED_OUTLET_ID", nextValue);
+  if (typeof clearApiCache === "function") clearApiCache();
+  renderOutletSwitcher(page);
+  loadPage(page);
 }
 
 function updateAuthUi() {
@@ -42,6 +156,8 @@ function updateAuthUi() {
   if (accessControlMenu) {
     accessControlMenu.style.display = isOwner() ? "" : "none";
   }
+
+  renderOutletSwitcher();
 }
 
 function renderLoginScreen(setupMode = false) {
@@ -114,6 +230,7 @@ async function bootAuth() {
 
       if (currentUser) {
         authNeedsSetup = false;
+        normalizeSelectedOutletId("dashboard");
         updateAuthUi();
         authBootstrapped = true;
         loadPage("dashboard");
@@ -137,6 +254,7 @@ async function bootAuth() {
     currentUser = me.user;
     authNeedsSetup = false;
     localStorage.setItem("STOCKPILOT_AUTH_USER", JSON.stringify(currentUser));
+    normalizeSelectedOutletId("dashboard");
     updateAuthUi();
     authBootstrapped = true;
     loadPage("dashboard");
@@ -165,6 +283,7 @@ async function loginUser() {
   localStorage.setItem("STOCKPILOT_AUTH_USER", JSON.stringify(data.user));
   authNeedsSetup = false;
   currentUser = data.user;
+  normalizeSelectedOutletId("dashboard");
   updateAuthUi();
   loadPage("dashboard");
 }
@@ -186,6 +305,7 @@ async function setupOwnerAccount() {
   localStorage.setItem("STOCKPILOT_AUTH_USER", JSON.stringify(data.user));
   authNeedsSetup = false;
   currentUser = data.user;
+  normalizeSelectedOutletId("dashboard");
   updateAuthUi();
   loadPage("dashboard");
 }
@@ -198,6 +318,7 @@ async function handleAuthButton() {
   await optionalApiCall("/auth/logout", { status: "ok" }, "POST", null, { cache: false });
   localStorage.removeItem("STOCKPILOT_AUTH_TOKEN");
   localStorage.removeItem("STOCKPILOT_AUTH_USER");
+  localStorage.removeItem("STOCKPILOT_SELECTED_OUTLET_ID");
   authNeedsSetup = false;
   currentUser = null;
   updateAuthUi();
@@ -206,6 +327,7 @@ async function handleAuthButton() {
 
 function handleAuthExpired() {
   currentUser = null;
+  localStorage.removeItem("STOCKPILOT_SELECTED_OUTLET_ID");
   updateAuthUi();
   renderLoginScreen(authNeedsSetup);
 }
@@ -220,7 +342,70 @@ async function loadUserAccessList() {
     box.textContent = "No users yet";
     return;
   }
-  box.innerHTML = users.map(user => `${user.display_name || user.username} - ${user.username} (${user.role})`).join("<br>");
+  box.innerHTML = users.map(user => {
+    const outletText = (user.outlets || []).map(outlet => outlet.name).join(", ") || "No outlet";
+    return `${user.display_name || user.username} - ${user.username} (${user.role})<br><small>${outletText}</small>`;
+  }).join("<br><br>");
+}
+
+async function loadOutletAdminData() {
+  const listBox = document.getElementById("outletAccessList");
+  const select = document.getElementById("newUserOutlets");
+  if (!isOwner()) return;
+
+  const data = await optionalApiCall("/outlets", { results: [] }, "GET", null, { cache: false });
+  const outlets = data.results || [];
+
+  if (listBox) {
+    listBox.innerHTML = outlets.length
+      ? outlets.map(outlet => `${outlet.name}${outlet.code ? ` (${outlet.code})` : ""}`).join("<br>")
+      : "No outlets yet";
+  }
+
+  if (select) {
+    select.innerHTML = outlets.map(outlet => `<option value="${outlet.id}">${outlet.name}</option>`).join("");
+  }
+}
+
+function syncUserOutletPicker() {
+  const role = document.getElementById("newUserRole")?.value || "STAFF";
+  const outletField = document.getElementById("newUserOutlets");
+  if (!outletField) return;
+  outletField.disabled = role === "OWNER";
+  outletField.closest(".user-outlet-picker")?.classList.toggle("is-disabled", role === "OWNER");
+}
+
+async function createOutlet() {
+  if (!isOwner()) {
+    showToast("Only owner can create outlets");
+    return;
+  }
+
+  const name = document.getElementById("newOutletName")?.value.trim() || "";
+  const code = document.getElementById("newOutletCode")?.value.trim() || "";
+  if (!name) {
+    showToast("Enter outlet name");
+    return;
+  }
+
+  const data = await apiCall("/outlets", "POST", JSON.stringify({ name, code }), { "Content-Type": "application/json" });
+  if (data.error) {
+    showToast(data.error);
+    return;
+  }
+
+  document.getElementById("newOutletName").value = "";
+  document.getElementById("newOutletCode").value = "";
+
+  currentUser = {
+    ...currentUser,
+    outlets: data.results || currentUser.outlets || []
+  };
+  localStorage.setItem("STOCKPILOT_AUTH_USER", JSON.stringify(currentUser));
+  normalizeSelectedOutletId(currentPage || "dashboard");
+  updateAuthUi();
+  await loadOutletAdminData();
+  showToast("Outlet created");
 }
 
 async function createAppUser() {
@@ -232,11 +417,16 @@ async function createAppUser() {
   const username = document.getElementById("newUsername")?.value.trim() || "";
   const password = document.getElementById("newUserPassword")?.value || "";
   const role = document.getElementById("newUserRole")?.value || "STAFF";
+  const outlet_ids = Array.from(document.getElementById("newUserOutlets")?.selectedOptions || []).map(option => option.value);
   if (!username || !password) {
     showToast("Enter username and password");
     return;
   }
-  const data = await apiCall("/auth/users", "POST", JSON.stringify({ display_name, username, password, role }), { "Content-Type": "application/json" });
+  if (role !== "OWNER" && !outlet_ids.length) {
+    showToast("Select at least one outlet for staff");
+    return;
+  }
+  const data = await apiCall("/auth/users", "POST", JSON.stringify({ display_name, username, password, role, outlet_ids }), { "Content-Type": "application/json" });
   if (data.error) {
     showToast(data.error);
     return;
@@ -245,6 +435,10 @@ async function createAppUser() {
   document.getElementById("newUsername").value = "";
   document.getElementById("newUserPassword").value = "";
   document.getElementById("newUserRole").value = "STAFF";
+  Array.from(document.getElementById("newUserOutlets")?.options || []).forEach(option => {
+    option.selected = false;
+  });
+  syncUserOutletPicker();
   showToast("User created");
   loadUserAccessList();
 }
@@ -254,6 +448,7 @@ function loadPage(page) {
       renderLoginScreen(authNeedsSetup);
       return;
     }
+    const selectedOutlet = normalizeSelectedOutletId(page);
     if (page === "daily-sheet" && !isOwner()) {
       showToast("Daily Sheet is only for owner");
       return;
@@ -262,7 +457,13 @@ function loadPage(page) {
       showToast("Access Control is only for owner");
       return;
     }
+    if (pageRequiresSingleOutlet(page) && selectedOutlet === ALL_OUTLETS_TOKEN) {
+      const fallback = getSingleOutletFallback();
+      localStorage.setItem("STOCKPILOT_SELECTED_OUTLET_ID", fallback);
+      showToast("Choose one outlet for this page");
+    }
     currentPage = page;
+    renderOutletSwitcher(page);
     const content = document.getElementById("content");
     const title = document.getElementById("pageTitle");
     const toast = document.getElementById("toast");
@@ -351,7 +552,7 @@ function loadPage(page) {
               Add dealer purchase here. If any birds died in transport, add that directly in the same row under transport mortality.
             </div>
             <div id="dealerEntryRows" class="stock-rows"></div>
-            <div class="upload-box">
+            <div class="upload-box upload-actions">
               <button onclick="addDealerEntryRow()">Add Dealer Row</button>
               <button onclick="submitDealerEntries()">Save Dealer Entries</button>
             </div>
@@ -365,7 +566,7 @@ function loadPage(page) {
               </div>
             </div>
             <div id="vendorEntryRows" class="stock-rows"></div>
-            <div class="upload-box">
+            <div class="upload-box upload-actions">
               <button onclick="addVendorEntryRow()">Add Vendor Row</button>
               <button onclick="submitVendorEntries()">Save Vendor Entries</button>
             </div>
@@ -379,7 +580,7 @@ function loadPage(page) {
               </div>
             </div>
             <div id="paymentEntryRows" class="stock-rows"></div>
-            <div class="upload-box">
+            <div class="upload-box upload-actions">
               <button onclick="addPaymentEntryRow()">Add Payment Row</button>
               <button onclick="submitPaymentEntries()">Save Payments</button>
             </div>
@@ -393,7 +594,7 @@ function loadPage(page) {
               </div>
             </div>
             <div id="mortalityEntryRows" class="stock-rows"></div>
-            <div class="upload-box">
+            <div class="upload-box upload-actions">
               <button onclick="addMortalityEntryRow()">Add Mortality Row</button>
               <button onclick="submitMortalityEntries()">Save Shop Mortality</button>
             </div>
@@ -416,7 +617,7 @@ function loadPage(page) {
                 <input type="number" class="actualWeight" placeholder="Actual stock (kg)" min="0" step="0.01">
               </div>
             </div>
-            <div class="upload-box">
+            <div class="upload-box upload-actions">
               <button onclick="addActualStockRow()">Add Hen Type</button>
               <button onclick="processDay()">Process</button>
             </div>
@@ -430,7 +631,7 @@ function loadPage(page) {
               </div>
             </div>
             <div id="openingBalanceEntryRows" class="stock-rows"></div>
-            <div class="upload-box">
+            <div class="upload-box upload-actions">
               <button onclick="addOpeningBalanceEntryRow()">Add Opening Balance Row</button>
               <button onclick="submitOpeningBalanceEntries()">Save Opening Balances</button>
             </div>
@@ -439,7 +640,7 @@ function loadPage(page) {
           <div class="section">
             <h2>Opening Stock</h2>
             <div id="openingStockEntryRows" class="stock-rows"></div>
-            <div class="upload-box">
+            <div class="upload-box upload-actions">
               <button onclick="addOpeningStockEntryRow()">Add Opening Stock Row</button>
               <button onclick="submitOpeningStockEntries()">Save Opening Stock</button>
             </div>
@@ -670,6 +871,33 @@ function loadPage(page) {
           <div class="section">
             <div class="section-head">
               <div>
+                <span>Outlet Management</span>
+                <h2>Add Outlet</h2>
+              </div>
+            </div>
+
+            <div class="upload-box">
+              <div class="report-form auth-form auth-inline-form">
+                <input type="text" id="newOutletName" placeholder="Outlet name">
+                <input type="text" id="newOutletCode" placeholder="Code (optional)">
+                <button onclick="createOutlet()">Add Outlet</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-head">
+              <div>
+                <span>Current Outlets</span>
+                <h2>Saved Outlets</h2>
+              </div>
+            </div>
+            <div id="outletAccessList" class="upload-box directory-intro">Loading outlets...</div>
+          </div>
+
+          <div class="section">
+            <div class="section-head">
+              <div>
                 <span>User Management</span>
                 <h2>Add App User</h2>
               </div>
@@ -684,6 +912,9 @@ function loadPage(page) {
                   <option value="STAFF">Staff</option>
                   <option value="OWNER">Owner</option>
                 </select>
+                <div class="user-outlet-picker">
+                  <select id="newUserOutlets" multiple aria-label="Outlet access"></select>
+                </div>
                 <button onclick="createAppUser()">Add User</button>
               </div>
             </div>
@@ -703,7 +934,10 @@ function loadPage(page) {
       `;
 
       setTimeout(() => {
+        loadOutletAdminData();
         loadUserAccessList();
+        syncUserOutletPicker();
+        document.getElementById("newUserRole")?.addEventListener("change", syncUserOutletPicker);
       }, 100);
     }
 

@@ -17,6 +17,16 @@ class Party(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
 
 
+class Outlet(Base):
+    __tablename__ = "outlets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False, unique=True)
+    code = Column(String, unique=True)
+    is_active = Column(String, nullable=False, default="true")
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -27,6 +37,19 @@ class User(Base):
     display_name = Column(String)
     is_active = Column(String, nullable=False, default="true")
     created_at = Column(TIMESTAMP, server_default=func.now())
+
+
+class UserOutletAccess(Base):
+    __tablename__ = "user_outlet_access"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"), nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "outlet_id", name="unique_user_outlet_access"),
+    )
 
 
 class UserSession(Base):
@@ -53,6 +76,7 @@ class Transaction(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     date = Column(Date, nullable=False)
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"))
     party_id = Column(UUID(as_uuid=True), ForeignKey("parties.id"))
     type = Column(String)
     category = Column(String)
@@ -76,6 +100,7 @@ class UploadedFile(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     file_hash = Column(String, unique=True)
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"))
     file_type = Column(String)  # vendor / dealer / payment
     created_at = Column(TIMESTAMP, server_default=func.now())
 
@@ -85,13 +110,14 @@ class ItemOpeningStock(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     date = Column(Date, nullable=False)
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"))
     item_type = Column(String, nullable=False)
     opening_quantity = Column(Numeric)
     opening_weight = Column(Numeric)
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("date", "item_type", name="unique_item_opening_stock"),
+        UniqueConstraint("date", "outlet_id", "item_type", name="unique_item_opening_stock"),
     )
 
 
@@ -99,7 +125,8 @@ class DailyStock(Base):
     __tablename__ = "daily_stock"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    date = Column(Date, unique=True)
+    date = Column(Date, nullable=False)
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"))
     opening_weight = Column(Numeric)
     purchase_weight = Column(Numeric)
     sales_weight = Column(Numeric)
@@ -113,6 +140,7 @@ class DailyItemStock(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     date = Column(Date, nullable=False)
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"))
     item_type = Column(String, nullable=False)
     opening_quantity = Column(Numeric)
     opening_weight = Column(Numeric)
@@ -129,7 +157,7 @@ class DailyItemStock(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("date", "item_type", name="unique_daily_item_stock"),
+        UniqueConstraint("date", "outlet_id", "item_type", name="unique_daily_item_stock"),
     )
 
 
@@ -139,6 +167,7 @@ class RetailBill(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     bill_number = Column(String, nullable=False)
     date = Column(Date, nullable=False)
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"))
     party_id = Column(UUID(as_uuid=True), ForeignKey("parties.id"))
     customer_name = Column(String)
     customer_phone = Column(String)
@@ -155,7 +184,7 @@ class RetailBill(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("date", "bill_number", name="unique_retail_bill_number_per_day"),
+        UniqueConstraint("date", "outlet_id", "bill_number", name="unique_retail_bill_number_per_day"),
     )
 
 
@@ -180,6 +209,7 @@ class DressedStockEntry(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     date = Column(Date, nullable=False)
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"))
     item_name = Column(String, nullable=False)
     live_quantity = Column(Numeric)
     live_weight = Column(Numeric)
@@ -196,6 +226,7 @@ class PaymentReceipt(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     receipt_number = Column(String, nullable=False)
     date = Column(Date, nullable=False)
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"))
     party_id = Column(UUID(as_uuid=True), ForeignKey("parties.id"))
     party_name = Column(String)
     party_phone = Column(String)
@@ -208,5 +239,5 @@ class PaymentReceipt(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint("date", "receipt_number", name="unique_payment_receipt_number_per_day"),
+        UniqueConstraint("date", "outlet_id", "receipt_number", name="unique_payment_receipt_number_per_day"),
     )

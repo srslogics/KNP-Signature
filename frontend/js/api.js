@@ -13,12 +13,21 @@ function getAuthToken() {
   return localStorage.getItem("STOCKPILOT_AUTH_TOKEN") || "";
 }
 
+function getSelectedOutletId() {
+  return localStorage.getItem("STOCKPILOT_SELECTED_OUTLET_ID") || "";
+}
+
 function clearAuthState() {
   localStorage.removeItem("STOCKPILOT_AUTH_TOKEN");
   localStorage.removeItem("STOCKPILOT_AUTH_USER");
+  localStorage.removeItem("STOCKPILOT_SELECTED_OUTLET_ID");
   if (typeof handleAuthExpired === "function") {
     handleAuthExpired();
   }
+}
+
+function clearApiCache() {
+  responseCache.clear();
 }
 
 async function apiCall(url, method = "GET", body = null, headers = {}, apiOptions = {}) {
@@ -44,6 +53,11 @@ async function apiCall(url, method = "GET", body = null, headers = {}, apiOption
       const authToken = getAuthToken();
       if (authToken) {
         options.headers["X-Auth-Token"] = authToken;
+      }
+
+      const selectedOutletId = getSelectedOutletId();
+      if (selectedOutletId) {
+        options.headers["X-Outlet-Id"] = selectedOutletId;
       }
 
       if (body) {

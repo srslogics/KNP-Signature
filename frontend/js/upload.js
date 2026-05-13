@@ -213,11 +213,11 @@ function initPartyDirectory() {
   nameInput.addEventListener("blur", () => scheduleUploadPartySuggestionHide(document.getElementById("directoryPartySuggestBox")));
 }
 
-function createManualRow(containerId, html) {
+function createManualRow(containerId, html, rowClass = "") {
   const container = document.getElementById(containerId);
   if (!container) return;
   const row = document.createElement("div");
-  row.className = "upload-box manual-entry-row";
+  row.className = `upload-box manual-entry-row ${rowClass}`.trim();
   row.innerHTML = html;
   container.appendChild(row);
 }
@@ -250,10 +250,10 @@ function addDealerEntryRow() {
     <input type="number" class="dealerNag" placeholder="NAG" min="0" step="1">
     <input type="number" class="dealerWeight" placeholder="Kgs" min="0" step="0.01">
     <input type="number" class="dealerRate" placeholder="Rate/kg" min="0" step="0.01">
-    <input type="number" class="dealerTransportMortalityNag" placeholder="Transport mortality NAG (optional)" min="0" step="1">
-    <input type="number" class="dealerTransportMortalityWeight" placeholder="Transport mortality kg (optional)" min="0" step="0.01">
+    <input type="number" class="dealerTransportMortalityNag" placeholder="Transport NAG" min="0" step="1">
+    <input type="number" class="dealerTransportMortalityWeight" placeholder="Transport KG" min="0" step="0.01">
     <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
-  `);
+  `, "dealer-entry-row");
 }
 
 function addVendorEntryRow() {
@@ -268,7 +268,7 @@ function addVendorEntryRow() {
     <input type="number" class="vendorWeight" placeholder="Kgs" min="0" step="0.01">
     <input type="number" class="vendorRate" placeholder="Rate/kg" min="0" step="0.01">
     <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
-  `);
+  `, "vendor-entry-row");
 }
 
 function addPaymentEntryRow() {
@@ -289,7 +289,7 @@ function addPaymentEntryRow() {
       <option value="PAID">Paid</option>
     </select>
     <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
-  `);
+  `, "payment-entry-row");
 }
 
 function addMortalityEntryRow() {
@@ -298,7 +298,7 @@ function addMortalityEntryRow() {
     <input type="number" class="mortalityNag" placeholder="NAG (optional)" min="0" step="1">
     <input type="number" class="mortalityWeight" placeholder="Weight (optional)" min="0" step="0.01">
     <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
-  `);
+  `, "mortality-entry-row");
 }
 
 function addOpeningBalanceEntryRow() {
@@ -313,7 +313,7 @@ function addOpeningBalanceEntryRow() {
       <option value="PAYABLE">Payable</option>
     </select>
     <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
-  `);
+  `, "opening-balance-entry-row");
 }
 
 function addOpeningStockEntryRow() {
@@ -322,7 +322,7 @@ function addOpeningStockEntryRow() {
     <input type="number" class="openingStockNag" placeholder="Opening NAG" min="0" step="1">
     <input type="number" class="openingStockWeight" placeholder="Opening kgs" min="0" step="0.01">
     <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
-  `);
+  `, "opening-stock-entry-row");
 }
 
 async function submitManualEntries(endpoint, rows, label) {
