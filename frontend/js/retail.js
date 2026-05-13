@@ -2615,6 +2615,37 @@ function mergeRetailBillResults(serverBills, pendingBills) {
   });
 }
 
+function normalizeRetailBillFingerprintValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function retailBillFingerprintParts(bill) {
+  return {
+    date: String(bill?.date || ""),
+    billNumber: String(bill?.bill_number || "").trim(),
+    customerName: normalizeRetailBillFingerprintValue(bill?.customer_name),
+    totalAmount: Number(bill?.total_amount || 0).toFixed(2),
+    mode: normalizeRetailBillMode(bill)
+  };
+}
+
+function retailBillsMatchByFingerprint(localBill, remoteBill) {
+  const local = retailBillFingerprintParts(localBill);
+  const remote = retailBillFingerprintParts(remoteBill);
+  return local.date === remote.date
+    && local.billNumber === remote.billNumber
+    && local.customerName === remote.customerName
+    && local.totalAmount === remote.totalAmount
+    && local.mode === remote.mode;
+}
+
+async function findMatchingRemoteRetailBill(pendingBill) {
+  if (!pendingBill?.date || !pendingBill?.bill_number) return null;
+  const response = await apiCall(`/retail-bills?date=${encodeURIComponent(pendingBill.date)}`, "GET", null, {}, { loader: false });
+  const results = Array.isArray(response?.results) ? response.results : [];
+  return results.find(serverBill => retailBillsMatchByFingerprint(pendingBill, serverBill)) || null;
+}
+
 function renderRetailOfflineBanner() {
   const banner = document.getElementById("retailOfflineBanner");
   if (!banner) return;
@@ -2672,6 +2703,13 @@ async function syncPendingRetailBills(silent = false) {
       }), { "Content-Type": "application/json" }, { loader: false });
 
       if (response?.error) {
+        if (String(response.error || "").toLowerCase().includes("already exists")) {
+          const existingBill = await findMatchingRemoteRetailBill(bill);
+          if (existingBill) {
+            syncedCount += 1;
+            continue;
+          }
+        }
         remaining.push({ ...bill, last_error: response.error });
         continue;
       }

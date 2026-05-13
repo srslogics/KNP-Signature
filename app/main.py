@@ -14,7 +14,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 from app.db import SessionLocal
 from app import models
-from sqlalchemy import case, func, text, or_
+from sqlalchemy import case, func, text, or_, and_, exists, cast, String
 from decimal import Decimal
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
@@ -467,9 +467,41 @@ def parse_input_date(value: str):
         return None
 
 
-def summarize_ledger_transactions(txns):
+def settled_retail_bill_keys(db: Session, txns):
+    if not txns:
+        return set()
+
+    retail_keys = {
+        (txn.date, txn.party_id, str(txn.bill_number or "").strip())
+        for txn in txns
+        if txn.party_id
+        and str(txn.bill_number or "").strip()
+        and txn.type == "SALE"
+        and (txn.category or "").upper() in ["RETAIL", "RETAIL DRESSED"]
+    }
+
+    if not retail_keys:
+        return set()
+
+    retail_dates = {key[0] for key in retail_keys}
+    retail_parties = {key[1] for key in retail_keys}
+    retail_bill_numbers = {key[2] for key in retail_keys}
+
+    return {
+        (bill.date, bill.party_id, str(bill.bill_number or "").strip())
+        for bill in db.query(models.RetailBill).filter(
+            models.RetailBill.party_id.in_(list(retail_parties)),
+            models.RetailBill.date.in_(list(retail_dates)),
+            models.RetailBill.bill_number.in_(list(retail_bill_numbers)),
+            models.RetailBill.outstanding_amount <= 0
+        ).all()
+    }
+
+
+def summarize_ledger_transactions(txns, settled_keys=None):
     summarized = []
     index = 0
+    settled_keys = settled_keys or set()
 
     while index < len(txns):
         txn = txns[index]
@@ -491,6 +523,8 @@ def summarize_ledger_transactions(txns):
             total_amount = sum(Decimal(g.amount or 0) for g in grouped)
             total_weight = sum(Decimal(g.weight or 0) for g in grouped)
             total_quantity = sum(Decimal(g.quantity or 0) for g in grouped)
+            bill_key = (first.date, first.party_id, str(first.bill_number or "").strip())
+            delta = Decimal("0") if bill_key in settled_keys else total_amount
 
             summarized.append({
                 "date": first.date,
@@ -500,7 +534,7 @@ def summarize_ledger_transactions(txns):
                 "payment_mode": first.payment_mode or "NA",
                 "bill_number": first.bill_number or "",
                 "amount": total_amount,
-                "delta": total_amount,
+                "delta": delta,
                 "weight": total_weight,
                 "quantity": total_quantity
             })
@@ -508,6 +542,13 @@ def summarize_ledger_transactions(txns):
 
         amount = Decimal(txn.amount or 0)
         delta = ledger_delta(txn)
+        bill_key = (txn.date, txn.party_id, str(txn.bill_number or "").strip())
+        if (
+            txn.type == "SALE"
+            and (txn.category or "").upper() in ["RETAIL", "RETAIL DRESSED"]
+            and bill_key in settled_keys
+        ):
+            delta = Decimal("0")
 
         txn_type = txn.type
         if txn.type == "PAYMENT" and txn.category:
@@ -533,11 +574,12 @@ def summarize_ledger_transactions(txns):
     return summarized
 
 
-def build_ledger(txns):
+def build_ledger(db: Session, txns):
     balance = Decimal("0")
     ledger = []
+    settled_keys = settled_retail_bill_keys(db, txns)
 
-    for txn in summarize_ledger_transactions(txns):
+    for txn in summarize_ledger_transactions(txns, settled_keys):
         amount = Decimal(txn["amount"] or 0)
         delta = Decimal(txn["delta"] or 0)
         balance += delta
@@ -560,18 +602,27 @@ def build_ledger(txns):
     return balance, ledger
 
 
-def build_party_summary(txns, balance):
+def build_party_summary(db: Session, txns, balance):
     last_txn = txns[-1] if txns else None
     last_date = last_txn.date if last_txn else None
     opening_balance = Decimal("0")
     day_txns = []
+    settled_keys = settled_retail_bill_keys(db, txns)
 
     if last_date:
         for txn in txns:
             if txn.date >= last_date:
                 day_txns.append(txn)
             else:
-                opening_balance += ledger_delta(txn)
+                delta = ledger_delta(txn)
+                bill_key = (txn.date, txn.party_id, str(txn.bill_number or "").strip())
+                if (
+                    txn.type == "SALE"
+                    and (txn.category or "").upper() in ["RETAIL", "RETAIL DRESSED"]
+                    and bill_key in settled_keys
+                ):
+                    delta = Decimal("0")
+                opening_balance += delta
 
     total_sales = sum(Decimal(t.amount or 0) for t in day_txns if t.type == "SALE")
     total_purchase = sum(Decimal(t.amount or 0) for t in day_txns if t.type == "PURCHASE")
@@ -601,8 +652,17 @@ def ledger_delta(txn):
     return Decimal("0")
 
 
-def receivable_delta(txn):
+def receivable_delta(txn, settled_keys=None):
     amount = Decimal(txn.amount or 0)
+    settled_keys = settled_keys or set()
+
+    bill_key = (txn.date, txn.party_id, str(txn.bill_number or "").strip())
+    if (
+        txn.type == "SALE"
+        and (txn.category or "").upper() in ["RETAIL", "RETAIL DRESSED"]
+        and bill_key in settled_keys
+    ):
+        return Decimal("0")
 
     if txn.type == "SALE" or (txn.type == "OPENING" and txn.category == "RECEIVABLE"):
         return amount
@@ -627,7 +687,22 @@ def payable_delta(txn):
 
 def receivable_case():
     return case(
-        (models.Transaction.type == "SALE", models.Transaction.amount),
+        (
+            (models.Transaction.type == "SALE") &
+            ~(
+                models.Transaction.source_ref.like("retail-bill:%") &
+                models.Transaction.party_id.isnot(None) &
+                exists().where(
+                    and_(
+                        models.RetailBill.party_id == models.Transaction.party_id,
+                        models.RetailBill.date == models.Transaction.date,
+                        cast(models.RetailBill.bill_number, String) == cast(models.Transaction.bill_number, String),
+                        models.RetailBill.outstanding_amount <= 0
+                    )
+                )
+            ),
+            models.Transaction.amount
+        ),
         (
             (models.Transaction.type == "OPENING") & (models.Transaction.category == "RECEIVABLE"),
             models.Transaction.amount
@@ -974,53 +1049,12 @@ def retail_party_balance_after(db: Session, party_id):
         models.Transaction.date.asc(),
         models.Transaction.created_at.asc()
     ).all()
-    txns = filter_party_ledger_transactions(db, txns)
-
-    balance_after, _ = build_ledger(txns)
+    balance_after, _ = build_ledger(db, txns)
     return float(balance_after or 0)
 
 
 def filter_party_ledger_transactions(db: Session, txns):
-    if not txns:
-        return txns
-
-    retail_keys = {
-        (txn.date, txn.party_id, str(txn.bill_number or "").strip())
-        for txn in txns
-        if txn.party_id
-        and str(txn.bill_number or "").strip()
-        and txn.type == "SALE"
-        and (txn.category or "").upper() in ["RETAIL", "RETAIL DRESSED"]
-    }
-
-    if not retail_keys:
-        return txns
-
-    retail_dates = {key[0] for key in retail_keys}
-    retail_parties = {key[1] for key in retail_keys}
-    retail_bill_numbers = {key[2] for key in retail_keys}
-
-    paid_bill_keys = {
-        (bill.date, bill.party_id, str(bill.bill_number or "").strip())
-        for bill in db.query(models.RetailBill).filter(
-            models.RetailBill.party_id.in_(list(retail_parties)),
-            models.RetailBill.date.in_(list(retail_dates)),
-            models.RetailBill.bill_number.in_(list(retail_bill_numbers)),
-            models.RetailBill.outstanding_amount <= 0
-        ).all()
-    }
-
-    if not paid_bill_keys:
-        return txns
-
-    return [
-        txn for txn in txns
-        if not (
-            txn.type == "SALE" and
-            (txn.category or "").upper() in ["RETAIL", "RETAIL DRESSED"] and
-            (txn.date, txn.party_id, str(txn.bill_number or "").strip()) in paid_bill_keys
-        )
-    ]
+    return txns
 
 
 def serialize_payment_receipt(receipt, balance_after=None):
@@ -2690,17 +2724,17 @@ def get_party_ledger(
             "party_id": party_id,
             "party_name": party.name,
             "total_balance": 0,
-            "summary": build_party_summary([], Decimal("0")),
+            "summary": build_party_summary(db, [], Decimal("0")),
             "ledger": []
         }
 
-    balance, ledger = build_ledger(txns)
+    balance, ledger = build_ledger(db, txns)
 
     return {
         "party_id": party_id,
         "party_name": party.name,
         "total_balance": float(balance),
-        "summary": build_party_summary(txns, balance),
+        "summary": build_party_summary(db, txns, balance),
         "ledger": ledger
     }
 
@@ -2758,7 +2792,7 @@ def get_party_profile(name: str, db: Session = Depends(get_db)):
         models.Transaction.date.asc(),
         models.Transaction.created_at.asc()
     ).all()
-    balance_after, _ = build_ledger(txns)
+    balance_after, _ = build_ledger(db, txns)
 
     return {
         "party": {
@@ -2926,16 +2960,16 @@ def get_ledger_by_name(
         return {
             "party_name": party.name if party else name,
             "total_balance": 0,
-            "summary": build_party_summary([], Decimal("0")),
+        "summary": build_party_summary(db, [], Decimal("0")),
             "ledger": []
         }
 
-    balance, ledger = build_ledger(txns)
+    balance, ledger = build_ledger(db, txns)
 
     return {
         "party_name": party.name if party else name,
         "total_balance": float(balance),
-        "summary": build_party_summary(txns, balance),
+        "summary": build_party_summary(db, txns, balance),
         "ledger": ledger
     }
 
@@ -2967,7 +3001,7 @@ def get_party_detail(name: str, db: Session = Depends(get_db)):
     ).order_by(models.Transaction.date.asc()).all()
     txns = filter_party_ledger_transactions(db, txns)
 
-    balance, ledger = build_ledger(txns)
+    balance, ledger = build_ledger(db, txns)
 
     return {
         "party": {
@@ -2977,7 +3011,7 @@ def get_party_detail(name: str, db: Session = Depends(get_db)):
             "phone": party.phone or "",
             "address": party.address or ""
         },
-        "summary": build_party_summary(txns, balance),
+        "summary": build_party_summary(db, txns, balance),
         "ledger": ledger
     }
 
@@ -3026,7 +3060,7 @@ def export_report(
 
         txns = query.order_by(models.Transaction.date.asc()).all()
         txns = filter_party_ledger_transactions(db, txns)
-        balance, ledger = build_ledger(txns)
+        balance, ledger = build_ledger(db, txns)
         rows = [
             {
                 "Party": party_row.name if party_row else party,
@@ -3122,7 +3156,8 @@ def export_report(
             if end:
                 query = query.filter(models.Transaction.date <= end)
             txns = query.all()
-            receivable = sum(receivable_delta(t) for t in txns)
+            settled_keys = settled_retail_bill_keys(db, txns)
+            receivable = sum(receivable_delta(t, settled_keys) for t in txns)
             payable = sum(payable_delta(t) for t in txns)
 
             if receivable or payable:
@@ -3913,7 +3948,7 @@ def get_payment_receipt(receipt_id: UUID, db: Session = Depends(get_db)):
         models.Transaction.date.asc(),
         models.Transaction.created_at.asc()
     ).all()
-    balance_after, _ = build_ledger(txns)
+    balance_after, _ = build_ledger(db, txns)
     return serialize_payment_receipt(receipt, balance_after)
 
 
@@ -3998,7 +4033,7 @@ def create_payment_receipt(payload: dict = Body(...), db: Session = Depends(get_
         models.Transaction.date.asc(),
         models.Transaction.created_at.asc()
     ).all()
-    balance_after, _ = build_ledger(txns)
+    balance_after, _ = build_ledger(db, txns)
     return {"receipt": serialize_payment_receipt(receipt, balance_after)}
 
 
@@ -4084,7 +4119,7 @@ def update_payment_receipt(receipt_id: UUID, payload: dict = Body(...), db: Sess
         models.Transaction.date.asc(),
         models.Transaction.created_at.asc()
     ).all()
-    balance_after, _ = build_ledger(txns)
+    balance_after, _ = build_ledger(db, txns)
     return {"receipt": serialize_payment_receipt(receipt, balance_after)}
 
 
@@ -4220,7 +4255,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db))
     if outstanding_amount > 0 and payment_mode.strip().upper() == "CASH":
         payment_mode = "Credit"
 
-    transaction_party_id = party_id if outstanding_amount > 0 else None
+    transaction_party_id = party_id if party_id else None
 
     bill = models.RetailBill(
         id=uuid4(),
@@ -4442,7 +4477,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
     if outstanding_amount > 0 and payment_mode.strip().upper() == "CASH":
         payment_mode = "Credit"
 
-    transaction_party_id = party_id if outstanding_amount > 0 else None
+    transaction_party_id = party_id if party_id else None
 
     previous_date = bill.date
 
