@@ -15,6 +15,7 @@ const RETAIL_SHORTCUT_ITEMS = [
 ];
 const RETAIL_PENDING_STORAGE_KEY = "stockpilot.retail.pending";
 const RETAIL_SHORTCUT_STORAGE_KEY = "stockpilot.retail.shortcuts";
+const LOCAL_PRINT_BRIDGE_URL = localStorage.getItem("stockpilot.printBridgeUrl") || "http://127.0.0.1:9876";
 
 let retailItemSuggestTimer = null;
 let retailCustomerSuggestTimer = null;
@@ -41,6 +42,174 @@ const retailPartyBalanceByMode = {
   dressed: 0
 };
 let retailSuggestHideTimer = null;
+
+async function printThroughLocalBridge(path, payload) {
+  const response = await fetch(`${LOCAL_PRINT_BRIDGE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.error) {
+    throw new Error(data?.error || `Printer bridge failed (${response.status})`);
+  }
+  return data;
+}
+
+function buildRetailBridgePayload(bill) {
+  return {
+    shop: RETAIL_SHOP_PROFILE,
+    bill: {
+      bill_number: bill.bill_number,
+      date: bill.date,
+      time: bill.time || new Date().toLocaleTimeString("en-GB"),
+      cashier_name: bill.cashier_name || "admin",
+      customer_name: bill.customer_name || "",
+      customer_phone: bill.customer_phone || "",
+      customer_address: bill.customer_address || "",
+      payment_mode: bill.payment_mode || "Cash",
+      paid_amount: Number(bill.paid_amount || 0),
+      outstanding_amount: Number(bill.party_balance ?? bill.outstanding_amount ?? 0),
+      total_amount: Number(bill.total_amount || 0),
+      total_weight: Number(bill.total_weight || 0),
+      total_nag: Number(bill.total_nag || bill.total_quantity || 0),
+      ice_amount: Number(bill.ice_amount || 0),
+      items_subtotal_amount: Number(bill.items_subtotal_amount ?? (Number(bill.total_amount || 0) - Number(bill.ice_amount || 0))),
+      notes: bill.notes || "",
+      items: (bill.items || []).map(item => ({
+        item_name: item.item_name || "",
+        line_type: item.line_type || "STANDARD",
+        nag: Number(item.nag || item.quantity || 0),
+        weight: Number(item.weight || 0),
+        rate: Number(item.rate || 0),
+        amount: Number(item.amount || 0)
+      }))
+    }
+  };
+}
+
+function buildPaymentReceiptBridgePayload(receipt) {
+  return {
+    shop: RETAIL_SHOP_PROFILE,
+    receipt: {
+      receipt_number: receipt.receipt_number,
+      date: receipt.date,
+      time: receipt.time || new Date().toLocaleTimeString("en-GB"),
+      cashier_name: receipt.cashier_name || "admin",
+      party_name: receipt.party_name || "",
+      party_phone: receipt.party_phone || "",
+      party_address: receipt.party_address || "",
+      direction: receipt.direction || "RECEIVED",
+      payment_mode: receipt.payment_mode || "Cash",
+      amount: Number(receipt.amount || 0),
+      balance_after: Number(receipt.balance_after || 0),
+      notes: receipt.notes || ""
+    }
+  };
+}
+
+function openRetailBrowserPrintWindow(bill) {
+  const printWindow = window.open("", "_blank", "width=420,height=820");
+  if (!printWindow) {
+    showToast("Allow popups to print bill");
+    return false;
+  }
+
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Retail Bill ${escapeHtml(bill.bill_number)}</title>
+        <style>
+          @page { size: 80mm auto; margin: 0; }
+          body { margin: 0; font-family: "Courier New", monospace; background: white; color: #111; }
+          .bill { width: 76mm; margin: 0 auto; padding: 4mm 2.5mm 5mm; }
+          .thermal-bill { width: 100%; color: #111; }
+          .thermal-label, .thermal-header-mini, .thermal-rule, .thermal-note-mini { text-align: center; }
+          .thermal-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+          .thermal-center { text-align: center; }
+          .thermal-center h3 { margin: 2px 0 3px; font-size: 18px; line-height: 1.1; }
+          .thermal-center p { margin: 1px 0; font-size: 11px; line-height: 1.25; }
+          .thermal-header-mini { margin-top: 2px; font-size: 10px; }
+          .thermal-meta-grid { margin-top: 7px; font-size: 11px; }
+          .thermal-meta-row { display: flex; justify-content: space-between; gap: 8px; margin: 1px 0; }
+          .thermal-customer { margin-top: 6px; font-size: 11px; }
+          .thermal-customer p { margin: 1px 0; }
+          .thermal-rule { margin: 2px 0 0; font-size: 10px; letter-spacing: 0; }
+          .thermal-items-table { width: 100% !important; min-width: 0 !important; max-width: 100% !important; border-collapse: collapse; table-layout: fixed; font-size: 9px; }
+          .thermal-items-table th, .thermal-items-table td { padding: 2px 0; vertical-align: top; white-space: nowrap; overflow: hidden; text-overflow: clip; }
+          .thermal-items-table th { font-weight: 700; }
+          .thermal-items-table th:nth-child(1), .thermal-items-table td:nth-child(1) { width: 6%; text-align: left; }
+          .thermal-items-table th:nth-child(2), .thermal-items-table td:nth-child(2) { width: 30%; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+          .thermal-items-table th:nth-child(3), .thermal-items-table td:nth-child(3) { width: 15%; text-align: right; padding-right: 6px; }
+          .thermal-items-table th:nth-child(4), .thermal-items-table td:nth-child(4) { width: 17%; text-align: right; padding-left: 6px; padding-right: 4px; }
+          .thermal-items-table th:nth-child(5), .thermal-items-table td:nth-child(5) { width: 14%; text-align: right; }
+          .thermal-items-table th:nth-child(6), .thermal-items-table td:nth-child(6) { width: 18%; text-align: right; }
+          .thermal-items-table.thermal-items-table-dressed th:nth-child(1), .thermal-items-table.thermal-items-table-dressed td:nth-child(1) { width: 8%; }
+          .thermal-items-table.thermal-items-table-dressed th:nth-child(2), .thermal-items-table.thermal-items-table-dressed td:nth-child(2) { width: 38%; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+          .thermal-items-table.thermal-items-table-dressed th:nth-child(3), .thermal-items-table.thermal-items-table-dressed td:nth-child(3) { width: 18%; text-align: right; }
+          .thermal-items-table.thermal-items-table-dressed th:nth-child(4), .thermal-items-table.thermal-items-table-dressed td:nth-child(4) { width: 16%; text-align: right; }
+          .thermal-items-table.thermal-items-table-dressed th:nth-child(5), .thermal-items-table.thermal-items-table-dressed td:nth-child(5) { width: 20%; text-align: right; }
+          .thermal-section-row td { padding-top: 5px; font-weight: 700; border-top: 1px dashed #a8adb7; }
+          .thermal-summary { margin-top: 1px; font-size: 11px; }
+          .thermal-summary p, .thermal-summary-row { display: flex; justify-content: space-between; gap: 10px; margin: 2px 0; }
+          .thermal-summary-compact { margin-bottom: 2px; }
+          .thermal-totals-table { margin-top: 1px; }
+          .thermal-total-row td { padding-top: 3px; font-size: 11px; font-weight: 700; border-top: none; }
+          .thermal-total-row td:first-child { text-align: left; }
+          .thermal-total { margin-top: 4px; padding-top: 4px; border-top: 1px dashed #666; font-weight: 700; }
+          .thermal-notes, .thermal-note-mini { margin-top: 6px; font-size: 10px; line-height: 1.25; }
+          .thermal-footer { margin-top: 10px; text-align: center; font-size: 11px; }
+          .thermal-footer p { margin: 1px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="bill">${getRetailReceiptMarkup(bill)}</div>
+        <script>
+          window.onload = function () {
+            window.print();
+            setTimeout(function () { window.close(); }, 250);
+          };
+        </script>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  return true;
+}
+
+function openPaymentReceiptBrowserPrintWindow(receipt) {
+  const printWindow = window.open("", "_blank", "width=420,height=820");
+  if (!printWindow) {
+    showToast("Allow popups to print receipt");
+    return false;
+  }
+
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Payment Receipt ${escapeHtml(receipt.receipt_number)}</title>
+        <style>
+          @page { size: 80mm auto; margin: 0; }
+          body { margin: 0; font-family: "Courier New", monospace; background: white; color: #111; }
+          .bill { width: 76mm; margin: 0 auto; padding: 4mm 2.5mm 5mm; }
+          .thermal-section-row td { padding-top: 5px; font-weight: 700; border-top: 1px dashed #a8adb7; }
+        </style>
+      </head>
+      <body>
+        <div class="bill">${getPaymentReceiptMarkup(receipt)}</div>
+        <script>
+          window.onload = function () {
+            window.print();
+            setTimeout(function () { window.close(); }, 250);
+          };
+        </script>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  return true;
+}
 
 const RETAIL_MODE_FIELDS = {
   regular: {
@@ -1505,76 +1674,23 @@ async function printCurrentRetailBill() {
     return;
   }
 
-  const printWindow = window.open("", "_blank", "width=420,height=820");
-  if (!printWindow) {
-    showToast("Allow popups to print bill");
-    return;
+  let printedViaBridge = false;
+  try {
+    await printThroughLocalBridge("/print/retail", buildRetailBridgePayload(bill));
+    printedViaBridge = true;
+    showToast(`Printed bill ${bill.bill_number}`);
+  } catch (e) {
+    console.error("Local retail print bridge failed", e);
+    showToast("Local print bridge unavailable. Using browser print.");
+    printedViaBridge = openRetailBrowserPrintWindow(bill);
   }
-
-  printWindow.document.write(`
-    <html>
-      <head>
-        <title>Retail Bill ${escapeHtml(bill.bill_number)}</title>
-        <style>
-          @page { size: 80mm auto; margin: 0; }
-          body { margin: 0; font-family: "Courier New", monospace; background: white; color: #111; }
-          .bill { width: 76mm; margin: 0 auto; padding: 4mm 2.5mm 5mm; }
-          .thermal-bill { width: 100%; color: #111; }
-          .thermal-label, .thermal-header-mini, .thermal-rule, .thermal-note-mini { text-align: center; }
-          .thermal-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
-          .thermal-center { text-align: center; }
-          .thermal-center h3 { margin: 2px 0 3px; font-size: 18px; line-height: 1.1; }
-          .thermal-center p { margin: 1px 0; font-size: 11px; line-height: 1.25; }
-          .thermal-header-mini { margin-top: 2px; font-size: 10px; }
-          .thermal-meta-grid { margin-top: 7px; font-size: 11px; }
-          .thermal-meta-row { display: flex; justify-content: space-between; gap: 8px; margin: 1px 0; }
-          .thermal-customer { margin-top: 6px; font-size: 11px; }
-          .thermal-customer p { margin: 1px 0; }
-          .thermal-rule { margin: 2px 0 0; font-size: 10px; letter-spacing: 0; }
-          .thermal-items-table { width: 100% !important; min-width: 0 !important; max-width: 100% !important; border-collapse: collapse; table-layout: fixed; font-size: 9px; }
-          .thermal-items-table th, .thermal-items-table td { padding: 2px 0; vertical-align: top; white-space: nowrap; overflow: hidden; text-overflow: clip; }
-          .thermal-items-table th { font-weight: 700; }
-          .thermal-items-table th:nth-child(1), .thermal-items-table td:nth-child(1) { width: 6%; text-align: left; }
-          .thermal-items-table th:nth-child(2), .thermal-items-table td:nth-child(2) { width: 30%; text-align: left; white-space: normal; overflow-wrap: anywhere; }
-          .thermal-items-table th:nth-child(3), .thermal-items-table td:nth-child(3) { width: 15%; text-align: right; padding-right: 6px; }
-          .thermal-items-table th:nth-child(4), .thermal-items-table td:nth-child(4) { width: 17%; text-align: right; padding-left: 6px; padding-right: 4px; }
-          .thermal-items-table th:nth-child(5), .thermal-items-table td:nth-child(5) { width: 14%; text-align: right; }
-          .thermal-items-table th:nth-child(6), .thermal-items-table td:nth-child(6) { width: 18%; text-align: right; }
-          .thermal-items-table.thermal-items-table-dressed th:nth-child(1), .thermal-items-table.thermal-items-table-dressed td:nth-child(1) { width: 8%; }
-          .thermal-items-table.thermal-items-table-dressed th:nth-child(2), .thermal-items-table.thermal-items-table-dressed td:nth-child(2) { width: 38%; text-align: left; white-space: normal; overflow-wrap: anywhere; }
-          .thermal-items-table.thermal-items-table-dressed th:nth-child(3), .thermal-items-table.thermal-items-table-dressed td:nth-child(3) { width: 18%; text-align: right; }
-          .thermal-items-table.thermal-items-table-dressed th:nth-child(4), .thermal-items-table.thermal-items-table-dressed td:nth-child(4) { width: 16%; text-align: right; }
-          .thermal-items-table.thermal-items-table-dressed th:nth-child(5), .thermal-items-table.thermal-items-table-dressed td:nth-child(5) { width: 20%; text-align: right; }
-          .thermal-section-row td { padding-top: 5px; font-weight: 700; border-top: 1px dashed #a8adb7; }
-          .thermal-summary { margin-top: 1px; font-size: 11px; }
-          .thermal-summary p, .thermal-summary-row { display: flex; justify-content: space-between; gap: 10px; margin: 2px 0; }
-          .thermal-summary-compact { margin-bottom: 2px; }
-          .thermal-totals-table { margin-top: 1px; }
-          .thermal-total-row td { padding-top: 3px; font-size: 11px; font-weight: 700; border-top: none; }
-          .thermal-total-row td:first-child { text-align: left; }
-          .thermal-total { margin-top: 4px; padding-top: 4px; border-top: 1px dashed #666; font-weight: 700; }
-          .thermal-notes, .thermal-note-mini { margin-top: 6px; font-size: 10px; line-height: 1.25; }
-          .thermal-footer { margin-top: 10px; text-align: center; font-size: 11px; }
-          .thermal-footer p { margin: 1px 0; }
-        </style>
-      </head>
-      <body>
-        <div class="bill">${getRetailReceiptMarkup(bill)}</div>
-        <script>
-          window.onload = function () {
-            window.print();
-            setTimeout(function () { window.close(); }, 250);
-          };
-        </script>
-      </body>
-    </html>
-  `);
-  printWindow.document.close();
 
   currentRetailBill = bill;
   retailDraftDirty = false;
   retailBillCompleted = true;
-  startNextRetailBill();
+  if (printedViaBridge) {
+    startNextRetailBill();
+  }
 }
 
 function getRetailBillShareText(bill) {
@@ -1709,40 +1825,23 @@ async function printCurrentPaymentReceipt() {
     return;
   }
 
-  const printWindow = window.open("", "_blank", "width=420,height=820");
-  if (!printWindow) {
-    showToast("Allow popups to print receipt");
-    return;
+  let printedViaBridge = false;
+  try {
+    await printThroughLocalBridge("/print/payment-receipt", buildPaymentReceiptBridgePayload(receipt));
+    printedViaBridge = true;
+    showToast(`Printed receipt ${receipt.receipt_number}`);
+  } catch (e) {
+    console.error("Local payment receipt print bridge failed", e);
+    showToast("Local print bridge unavailable. Using browser print.");
+    printedViaBridge = openPaymentReceiptBrowserPrintWindow(receipt);
   }
-
-  printWindow.document.write(`
-    <html>
-      <head>
-        <title>Payment Receipt ${escapeHtml(receipt.receipt_number)}</title>
-        <style>
-          @page { size: 80mm auto; margin: 0; }
-          body { margin: 0; font-family: "Courier New", monospace; background: white; color: #111; }
-          .bill { width: 76mm; margin: 0 auto; padding: 4mm 2.5mm 5mm; }
-          .thermal-section-row td { padding-top: 5px; font-weight: 700; border-top: 1px dashed #a8adb7; }
-        </style>
-      </head>
-      <body>
-        <div class="bill">${getPaymentReceiptMarkup(receipt)}</div>
-        <script>
-          window.onload = function () {
-            window.print();
-            setTimeout(function () { window.close(); }, 250);
-          };
-        </script>
-      </body>
-    </html>
-  `);
-  printWindow.document.close();
 
   currentPaymentReceipt = receipt;
   paymentReceiptDraftDirty = false;
   paymentReceiptCompleted = true;
-  startNextPaymentReceipt();
+  if (printedViaBridge) {
+    startNextPaymentReceipt();
+  }
 }
 
 function getPaymentReceiptShareText(receipt) {
