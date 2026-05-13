@@ -252,11 +252,6 @@ def ensure_database_schema():
         conn.execute(text("UPDATE dressed_stock_entries SET outlet_id = :outlet_id WHERE outlet_id IS NULL"), {"outlet_id": default_outlet})
         conn.execute(text("UPDATE payment_receipts SET outlet_id = :outlet_id WHERE outlet_id IS NULL"), {"outlet_id": default_outlet})
 
-
-
-ensure_database_schema()
-
-
 def ensure_outlet_access_defaults():
     db = SessionLocal()
     try:
@@ -281,10 +276,6 @@ def ensure_outlet_access_defaults():
         db.commit()
     finally:
         db.close()
-
-
-ensure_outlet_access_defaults()
-
 def get_db():
     db = SessionLocal()
     try:
@@ -458,6 +449,10 @@ def outlet_scope_filter(model, scope):
         outlet_ids = [outlet.id for outlet in scope["outlets"]]
         return model.outlet_id.in_(outlet_ids)
     return model.outlet_id == scope["selected"].id
+
+
+ensure_database_schema()
+ensure_outlet_access_defaults()
 
 app.add_middleware(
     CORSMiddleware,
