@@ -250,6 +250,8 @@ function addDealerEntryRow() {
     <input type="number" class="dealerNag" placeholder="NAG" min="0" step="1">
     <input type="number" class="dealerWeight" placeholder="Kgs" min="0" step="0.01">
     <input type="number" class="dealerRate" placeholder="Rate/kg" min="0" step="0.01">
+    <input type="number" class="dealerTransportMortalityNag" placeholder="Transport mortality NAG (optional)" min="0" step="1">
+    <input type="number" class="dealerTransportMortalityWeight" placeholder="Transport mortality kg (optional)" min="0" step="0.01">
     <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
   `);
 }
@@ -372,9 +374,11 @@ function submitDealerEntries() {
       hen_type: row.querySelector(".dealerItem")?.value.trim(),
       nag: row.querySelector(".dealerNag")?.value,
       kgs: row.querySelector(".dealerWeight")?.value,
-      rate_per_kg: row.querySelector(".dealerRate")?.value
+      rate_per_kg: row.querySelector(".dealerRate")?.value,
+      transport_mortality_nag: row.querySelector(".dealerTransportMortalityNag")?.value,
+      transport_mortality_weight: row.querySelector(".dealerTransportMortalityWeight")?.value
     }))
-    .filter(row => row.dealer || row.hen_type || row.kgs || row.rate_per_kg);
+    .filter(row => row.dealer || row.hen_type || row.kgs || row.rate_per_kg || row.transport_mortality_nag || row.transport_mortality_weight);
   submitManualEntries("/entries/dealer", rows, "Dealer entries saved");
 }
 

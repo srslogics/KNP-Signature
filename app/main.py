@@ -1352,10 +1352,17 @@ def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db:
             quantity = parse_decimal(row.get("nag", row.get("quantity")))
             weight = parse_decimal(row.get("kgs", row.get("weight")))
             rate = parse_decimal(row.get("rate_per_kg", row.get("rate")))
+            transport_mortality_nag = parse_decimal(row.get("transport_mortality_nag"))
+            transport_mortality_weight = parse_decimal(row.get("transport_mortality_weight"))
 
             if not party_name or not item_type or weight <= 0 or rate <= 0 or quantity < 0:
                 skipped += 1
                 row_error(errors, index, "Enter dealer, hen type, valid NAG, kg, and rate")
+                continue
+
+            if transport_mortality_nag < 0 or transport_mortality_weight < 0:
+                skipped += 1
+                row_error(errors, index, "Transport mortality NAG and kg cannot be negative")
                 continue
 
             party_id = get_or_create_party(db, party_name, "DEALER", seen_aliases)
@@ -1389,6 +1396,43 @@ def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db:
                 bill_number=bill_number
             ))
             seen_transactions.add(txn_key)
+
+            if transport_mortality_nag > 0 or transport_mortality_weight > 0:
+                mortality_key = (
+                    target_date,
+                    party_id,
+                    float(transport_mortality_nag),
+                    float(transport_mortality_weight),
+                    "TRANSPORTATION MORTALITY",
+                    bill_number or "",
+                    item_type
+                )
+                existing_mortality = db.query(models.Transaction).filter_by(
+                    date=target_date,
+                    party_id=party_id,
+                    type="MORTALITY",
+                    category="TRANSPORTATION MORTALITY",
+                    item_type=item_type,
+                    quantity=transport_mortality_nag if transport_mortality_nag > 0 else None,
+                    weight=transport_mortality_weight if transport_mortality_weight > 0 else 0,
+                    bill_number=bill_number
+                ).first()
+
+                if not existing_mortality and mortality_key not in seen_transactions:
+                    db.add(models.Transaction(
+                        date=target_date,
+                        party_id=party_id,
+                        type="MORTALITY",
+                        category="TRANSPORTATION MORTALITY",
+                        item_type=item_type,
+                        quantity=transport_mortality_nag if transport_mortality_nag > 0 else None,
+                        weight=transport_mortality_weight if transport_mortality_weight > 0 else 0,
+                        rate=0,
+                        amount=0,
+                        payment_mode="NA",
+                        bill_number=bill_number
+                    ))
+                    seen_transactions.add(mortality_key)
             inserted += 1
         except Exception as e:
             skipped += 1
@@ -1505,12 +1549,12 @@ def create_mortality_entries(payload: dict = Body(...), input_date: str = None, 
                 row_error(errors, index, "Enter NAG or weight")
                 continue
 
-            txn_key = (target_date, item_type, float(quantity), float(weight), "MORTALITY")
+            txn_key = (target_date, item_type, float(quantity), float(weight), "SHOP MORTALITY")
             existing_txn = db.query(models.Transaction).filter_by(
                 date=target_date,
                 party_id=None,
                 type="MORTALITY",
-                category="MORTALITY",
+                category="SHOP MORTALITY",
                 item_type=item_type,
                 quantity=quantity if quantity > 0 else None,
                 weight=weight if weight > 0 else 0
@@ -1524,7 +1568,7 @@ def create_mortality_entries(payload: dict = Body(...), input_date: str = None, 
                 date=target_date,
                 party_id=None,
                 type="MORTALITY",
-                category="MORTALITY",
+                category="SHOP MORTALITY",
                 item_type=item_type,
                 quantity=quantity if quantity > 0 else None,
                 weight=weight if weight > 0 else 0,
@@ -4805,34 +4849,63 @@ def daily_sheet(date: str, sheet_type: str = "stock", db: Session = Depends(get_
         purchase_total_amount += amount
         purchase_total_rate_weight += weight * rate
 
-    mortality_rows_raw = db.query(models.Transaction).filter(
-        models.Transaction.date == target_date,
-        models.Transaction.type == "MORTALITY"
-    ).order_by(models.Transaction.item_type.asc()).all()
-
-    mortality_grouped = db.query(
+    transport_mortality_grouped = db.query(
         models.Transaction.item_type.label("item_type"),
         func.sum(models.Transaction.quantity).label("quantity"),
         func.sum(models.Transaction.weight).label("weight")
     ).filter(
         models.Transaction.date == target_date,
-        models.Transaction.type == "MORTALITY"
+        models.Transaction.type == "MORTALITY",
+        models.Transaction.category == "TRANSPORTATION MORTALITY"
     ).group_by(
         models.Transaction.item_type
     ).order_by(
         models.Transaction.item_type.asc()
     ).all()
 
-    mortality_rows = []
-    mortality_total_quantity = None
-    mortality_total_weight = Decimal("0")
-    for row in mortality_grouped:
+    transport_mortality_rows = []
+    transport_mortality_total_quantity = None
+    transport_mortality_total_weight = Decimal("0")
+    for row in transport_mortality_grouped:
         quantity = Decimal(row.quantity or 0) if row.quantity is not None else None
         weight = Decimal(row.weight or 0)
-        mortality_rows.append(format_sheet_row(row.item_type or "Unknown", weight, Decimal("0"), Decimal("0"), quantity))
+        transport_mortality_rows.append(format_sheet_row(row.item_type or "Unknown", weight, Decimal("0"), Decimal("0"), quantity))
         if quantity is not None:
-            mortality_total_quantity = Decimal(mortality_total_quantity or 0) + quantity
-        mortality_total_weight += weight
+            transport_mortality_total_quantity = Decimal(transport_mortality_total_quantity or 0) + quantity
+        transport_mortality_total_weight += weight
+
+    shop_mortality_grouped = db.query(
+        models.Transaction.item_type.label("item_type"),
+        func.sum(models.Transaction.quantity).label("quantity"),
+        func.sum(models.Transaction.weight).label("weight")
+    ).filter(
+        models.Transaction.date == target_date,
+        models.Transaction.type == "MORTALITY",
+        or_(
+            models.Transaction.category == "SHOP MORTALITY",
+            models.Transaction.category == "MORTALITY"
+        )
+    ).group_by(
+        models.Transaction.item_type
+    ).order_by(
+        models.Transaction.item_type.asc()
+    ).all()
+
+    shop_mortality_rows = []
+    shop_mortality_total_quantity = None
+    shop_mortality_total_weight = Decimal("0")
+    for row in shop_mortality_grouped:
+        quantity = Decimal(row.quantity or 0) if row.quantity is not None else None
+        weight = Decimal(row.weight or 0)
+        shop_mortality_rows.append(format_sheet_row(row.item_type or "Unknown", weight, Decimal("0"), Decimal("0"), quantity))
+        if quantity is not None:
+            shop_mortality_total_quantity = Decimal(shop_mortality_total_quantity or 0) + quantity
+        shop_mortality_total_weight += weight
+
+    mortality_total_quantity = optional_decimal_sum(
+        value for value in [transport_mortality_total_quantity, shop_mortality_total_quantity] if value is not None
+    )
+    mortality_total_weight = transport_mortality_total_weight + shop_mortality_total_weight
 
     sales_raw = db.query(models.Transaction).filter(
         models.Transaction.date == target_date,
@@ -5106,14 +5179,19 @@ def daily_sheet(date: str, sheet_type: str = "stock", db: Session = Depends(get_
             "rows": purchase_rows,
             "total": format_sheet_row("TOTAL", purchase_total_weight, total_purchase_rate, purchase_total_amount, purchase_total_quantity)
         },
-        "mortality_stock": {
-            "rows": mortality_rows,
-            "total": format_sheet_row("TOTAL", mortality_total_weight, Decimal("0"), Decimal("0"), mortality_total_quantity)
+        "transport_mortality_stock": {
+            "rows": transport_mortality_rows,
+            "total": format_sheet_row("TOTAL", transport_mortality_total_weight, Decimal("0"), Decimal("0"), transport_mortality_total_quantity)
+        },
+        "shop_mortality_stock": {
+            "rows": shop_mortality_rows,
+            "total": format_sheet_row("TOTAL", shop_mortality_total_weight, Decimal("0"), Decimal("0"), shop_mortality_total_quantity)
         },
         "sales_sections": ordered_sales_sections,
         "final_stock": {
             "total_purchases": format_sheet_row("TOTAL PURCHASES", purchase_total_weight, total_purchase_rate, purchase_total_amount, purchase_total_quantity),
-            "mortality": format_sheet_row("MORTALITY", mortality_total_weight, Decimal("0"), Decimal("0"), mortality_total_quantity),
+            "transport_mortality": format_sheet_row("TRANSPORTATION MORTALITY", transport_mortality_total_weight, Decimal("0"), Decimal("0"), transport_mortality_total_quantity),
+            "shop_mortality": format_sheet_row("SHOP MORTALITY", shop_mortality_total_weight, Decimal("0"), Decimal("0"), shop_mortality_total_quantity),
             "sales": format_sheet_row("SALES", total_sales_weight, total_sales_rate, total_sales_amount, total_sales_quantity),
             "closing_stock": format_sheet_row("CLOSING STOCK", closing_weight, closing_rate, closing_amount, closing_quantity),
             "actual_stock": format_sheet_row("ACTUAL STOCK", actual_weight, closing_rate, actual_amount, actual_quantity),
@@ -5164,10 +5242,16 @@ def daily_sheet(date: str, sheet_type: str = "stock", db: Session = Depends(get_
                 "subvalue": total_sales_quantity is not None and f"{float(total_sales_quantity):.0f} NAG" or None
             },
             {
-                "label": "Mortality",
-                "value": float(mortality_total_weight),
+                "label": "Transport Mortality",
+                "value": float(transport_mortality_total_weight),
                 "suffix": " kg",
-                "subvalue": mortality_total_quantity is not None and f"{float(mortality_total_quantity):.0f} NAG" or None
+                "subvalue": transport_mortality_total_quantity is not None and f"{float(transport_mortality_total_quantity):.0f} NAG" or None
+            },
+            {
+                "label": "Shop Mortality",
+                "value": float(shop_mortality_total_weight),
+                "suffix": " kg",
+                "subvalue": shop_mortality_total_quantity is not None and f"{float(shop_mortality_total_quantity):.0f} NAG" or None
             },
             {
                 "label": "Expected Closing",

@@ -33,8 +33,11 @@ async function loadDailySheet() {
 
       content.appendChild(createSheetSection(`Opening Stock ${formatDisplayDate(date)}`, data.opening_stock));
       content.appendChild(createSheetSection("Purchase Stock", data.purchase_stock));
-      if (data.mortality_stock?.rows?.length) {
-        content.appendChild(createSheetSection("Mortality", data.mortality_stock));
+      if (data.transport_mortality_stock?.rows?.length) {
+        content.appendChild(createSheetSection("Transportation Mortality", data.transport_mortality_stock));
+      }
+      if (data.shop_mortality_stock?.rows?.length) {
+        content.appendChild(createSheetSection("Shop Mortality", data.shop_mortality_stock));
       }
 
       (data.sales_sections || []).forEach(section => {
@@ -139,7 +142,8 @@ function createFinalSummarySection(summary) {
 
   const rows = [
     summary.total_purchases,
-    summary.mortality,
+    summary.transport_mortality,
+    summary.shop_mortality,
     summary.sales,
     summary.closing_stock,
     summary.actual_stock,

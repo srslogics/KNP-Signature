@@ -138,27 +138,29 @@ def build_retail_bytes(payload: dict) -> bytes:
     bill = payload.get("bill") or {}
     items = bill.get("items") or []
     is_dressed_only = bool(items) and all(str(i.get("line_type") or "STANDARD").upper() == "DRESSED" for i in items)
+    outstanding_amount = float(bill.get("outstanding_amount") or 0)
+    running_balance = float(bill.get("running_balance") or outstanding_amount)
+    previous_balance = max(0.0, running_balance - outstanding_amount)
+    invoice_type = "Credit" if outstanding_amount > 0 else "Cash"
 
     out = bytearray()
     out += esc_init()
-    out += center("INVOICE")
     out += esc_bold(True) + esc_double(True) + center(str(shop.get("name") or "Shop")) + esc_double(False) + esc_bold(False)
     for line in [shop.get("proprietor"), shop.get("address"), f"Mob. {shop.get('phone') or ''}"]:
         if line:
             out += center(str(line))
     out += encode_line(hr())
-    out += encode_line(lr("Bill no", str(bill.get("bill_number") or "")))
-    out += encode_line(lr("Date", str(bill.get("date") or "")))
-    out += encode_line(lr("Time", str(bill.get("time") or "")))
+    out += center("TAX INVOICE")
+    out += encode_line(lr(f"Invoice No: {bill.get('bill_number') or ''}", f"Type: {invoice_type}"))
+    out += encode_line(f"Date: {bill.get('date') or ''} {bill.get('time') or ''}".strip())
     out += encode_line(lr("Cashier", str(bill.get("cashier_name") or "admin")))
 
     if bill.get("customer_name"):
-      out += encode_line("")
       out += encode_line(f"Customer: {bill.get('customer_name')}")
     if bill.get("customer_phone"):
-      out += encode_line(f"Phone   : {bill.get('customer_phone')}")
+      out += encode_line(f"Mobile No: {bill.get('customer_phone')}")
     if bill.get("customer_address"):
-      out += encode_line(f"Address : {bill.get('customer_address')}")
+      out += encode_line(f"Address: {bill.get('customer_address')}")
 
     out += encode_line(hr())
     if is_dressed_only:
@@ -172,6 +174,7 @@ def build_retail_bytes(payload: dict) -> bytes:
             out += encode_line(line)
 
     out += encode_line(hr())
+    out += encode_line(lr("Subtotal", money(bill.get("items_subtotal_amount") or bill.get("total_amount"))))
     if is_dressed_only:
         out += esc_bold(True) + encode_line(
             lr("Total", f"{decimal3(bill.get('total_weight'))} {money(bill.get('total_amount'))}".rjust(20))
@@ -182,18 +185,20 @@ def build_retail_bytes(payload: dict) -> bytes:
         ) + esc_bold(False)
 
     if float(bill.get("ice_amount") or 0) > 0:
-        out += encode_line(lr("Items Total", money(bill.get("items_subtotal_amount"))))
         out += encode_line(lr("Ice Amount", money(bill.get("ice_amount"))))
         out += esc_bold(True) + encode_line(lr("TOTAL", money(bill.get("total_amount")))) + esc_bold(False)
 
+    out += encode_line(hr())
+    out += encode_line(lr("Previous Balance", money(previous_balance)))
     out += encode_line(lr(f"{bill.get('payment_mode') or 'Cash'} Payment", money(bill.get("paid_amount"))))
-    out += encode_line(lr("Outstanding", money(bill.get("outstanding_amount"))))
+    out += esc_bold(True) + encode_line(lr("New Balance", money(running_balance))) + esc_bold(False)
     if bill.get("notes"):
         out += encode_line(hr())
         for line in wrap_text(str(bill.get("notes")), CHARS_PER_LINE):
             out += encode_line(line)
 
     out += encode_line(hr())
+    out += center(f"Created By: {bill.get('cashier_name') or 'admin'}")
     out += center("Thank You")
     out += center("Visit Again")
     out += esc_feed(4)
