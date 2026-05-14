@@ -534,7 +534,7 @@ function loadPage(page) {
                 <option value="VENDOR">Vendor</option>
                 <option value="DEALER">Dealer</option>
               </select>
-              <button type="button" onclick="savePartyDirectoryEntry()">Save Party</button>
+              <button type="button" class="directory-save-button" onclick="savePartyDirectoryEntry()">Save Party</button>
             </div>
             <div class="upload-box directory-intro">
               Pick a saved party from the dropdown to edit it, or leave the dropdown empty to add a new one.

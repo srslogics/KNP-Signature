@@ -183,7 +183,7 @@ async function handleUpload(inputId, endpoint, label, preview = false) {
       <input type="text" class="actualItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)">
       <input type="number" class="actualNag" placeholder="Actual NAG" min="0" step="1">
       <input type="number" class="actualWeight" placeholder="Actual stock (kg)" min="0" step="0.01">
-      <button onclick="removeActualStockRow(this)">Remove</button>
+      <button type="button" class="row-remove-button" onclick="removeActualStockRow(this)">Remove</button>
     `;
     container.appendChild(row);
   }
@@ -252,7 +252,7 @@ function addDealerEntryRow() {
     <input type="number" class="dealerRate" placeholder="Rate/kg" min="0" step="0.01">
     <input type="number" class="dealerTransportMortalityNag" placeholder="Transport NAG" min="0" step="1">
     <input type="number" class="dealerTransportMortalityWeight" placeholder="Transport KG" min="0" step="0.01">
-    <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
+    <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
   `, "dealer-entry-row");
 }
 
@@ -267,7 +267,7 @@ function addVendorEntryRow() {
     <input type="number" class="vendorNag" placeholder="NAG" min="0" step="1">
     <input type="number" class="vendorWeight" placeholder="Kgs" min="0" step="0.01">
     <input type="number" class="vendorRate" placeholder="Rate/kg" min="0" step="0.01">
-    <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
+    <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
   `, "vendor-entry-row");
 }
 
@@ -288,7 +288,7 @@ function addPaymentEntryRow() {
       <option value="RECEIVED">Received</option>
       <option value="PAID">Paid</option>
     </select>
-    <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
+    <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
   `, "payment-entry-row");
 }
 
@@ -297,7 +297,7 @@ function addMortalityEntryRow() {
     <input type="text" class="mortalityItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)">
     <input type="number" class="mortalityNag" placeholder="NAG (optional)" min="0" step="1">
     <input type="number" class="mortalityWeight" placeholder="Weight (optional)" min="0" step="0.01">
-    <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
+    <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
   `, "mortality-entry-row");
 }
 
@@ -312,7 +312,7 @@ function addOpeningBalanceEntryRow() {
       <option value="RECEIVABLE">Receivable</option>
       <option value="PAYABLE">Payable</option>
     </select>
-    <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
+    <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
   `, "opening-balance-entry-row");
 }
 
@@ -321,7 +321,7 @@ function addOpeningStockEntryRow() {
     <input type="text" class="openingStockItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)">
     <input type="number" class="openingStockNag" placeholder="Opening NAG" min="0" step="1">
     <input type="number" class="openingStockWeight" placeholder="Opening kgs" min="0" step="0.01">
-    <button type="button" onclick="removeManualEntryRow(this)">Remove</button>
+    <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
   `, "opening-stock-entry-row");
 }
 

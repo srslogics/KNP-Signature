@@ -44,6 +44,15 @@ def money(value: Any) -> str:
         return "0.00"
 
 
+def compact_money(value: Any) -> str:
+    try:
+        number = float(value or 0)
+    except Exception:
+        return "0.0"
+    text = f"{number:.2f}".rstrip("0")
+    return text if text.endswith(".0") or "." in text else f"{text}.0"
+
+
 def decimal3(value: Any) -> str:
     try:
         return f"{float(value or 0):.3f}"
@@ -98,6 +107,11 @@ def lr(left: str, right: str, width: int = CHARS_PER_LINE) -> str:
     return left + " " + right.rjust(width - len(left) - 1)
 
 
+def label_value(label: str, value: Any, width: int = CHARS_PER_LINE) -> str:
+    prefix = f"{label}:"
+    return lr(prefix, str(value or ""), width)
+
+
 def retail_item_lines(item: dict, index: int):
     line_type = str(item.get("line_type") or "STANDARD").upper()
     if line_type == "DRESSED":
@@ -145,22 +159,24 @@ def build_retail_bytes(payload: dict) -> bytes:
 
     out = bytearray()
     out += esc_init()
-    out += esc_bold(True) + esc_double(True) + center(str(shop.get("name") or "Shop")) + esc_double(False) + esc_bold(False)
+    out += esc_align("center")
+    out += esc_bold(True) + esc_double(True) + encode_line(str(shop.get("name") or "Shop")) + esc_double(False) + esc_bold(False)
     for line in [shop.get("proprietor"), shop.get("address"), f"Mob. {shop.get('phone') or ''}"]:
         if line:
-            out += center(str(line))
+            out += encode_line(str(line))
+    out += esc_align("left")
     out += encode_line(hr())
     out += center("TAX INVOICE")
     out += encode_line(lr(f"Invoice No: {bill.get('bill_number') or ''}", f"Type: {invoice_type}"))
-    out += encode_line(f"Date: {bill.get('date') or ''} {bill.get('time') or ''}".strip())
-    out += encode_line(lr("Cashier", str(bill.get("cashier_name") or "admin")))
+    out += encode_line(lr("Date", f"{bill.get('date') or ''} {bill.get('time') or ''}".strip()))
+    out += encode_line(label_value("Cashier", bill.get("cashier_name") or "admin"))
 
     if bill.get("customer_name"):
-      out += encode_line(f"Customer: {bill.get('customer_name')}")
+      out += encode_line(label_value("Customer", bill.get("customer_name")))
     if bill.get("customer_phone"):
-      out += encode_line(f"Mobile No: {bill.get('customer_phone')}")
+      out += encode_line(label_value("Mobile No", bill.get("customer_phone")))
     if bill.get("customer_address"):
-      out += encode_line(f"Address: {bill.get('customer_address')}")
+      out += encode_line(label_value("Address", bill.get("customer_address")))
 
     out += encode_line(hr())
     if is_dressed_only:
@@ -174,24 +190,24 @@ def build_retail_bytes(payload: dict) -> bytes:
             out += encode_line(line)
 
     out += encode_line(hr())
-    out += encode_line(lr("Subtotal", money(bill.get("items_subtotal_amount") or bill.get("total_amount"))))
     if is_dressed_only:
         out += esc_bold(True) + encode_line(
-            lr("Total", f"{decimal3(bill.get('total_weight'))} {money(bill.get('total_amount'))}".rjust(20))
+            lr("Total", f"{decimal3(bill.get('total_weight'))} {compact_money(bill.get('total_amount'))}".rjust(20))
         ) + esc_bold(False)
     else:
         out += esc_bold(True) + encode_line(
-            f"{'Total':<15}{integerish(bill.get('total_nag')).rjust(4)} {decimal3(bill.get('total_weight')).rjust(8)} {money(bill.get('total_amount')).rjust(11)}"
+            f"{'Total':<15}{integerish(bill.get('total_nag')).rjust(4)} {decimal3(bill.get('total_weight')).rjust(8)} {compact_money(bill.get('total_amount')).rjust(11)}"
         ) + esc_bold(False)
 
     if float(bill.get("ice_amount") or 0) > 0:
-        out += encode_line(lr("Ice Amount", money(bill.get("ice_amount"))))
-        out += esc_bold(True) + encode_line(lr("TOTAL", money(bill.get("total_amount")))) + esc_bold(False)
+        out += encode_line(lr("Items Total", compact_money(bill.get("items_subtotal_amount") or bill.get("total_amount"))))
+        out += encode_line(lr("Ice Amount", compact_money(bill.get("ice_amount"))))
+        out += esc_bold(True) + encode_line(lr("Total Bill", compact_money(bill.get("total_amount")))) + esc_bold(False)
 
     out += encode_line(hr())
-    out += encode_line(lr("Previous Balance", money(previous_balance)))
-    out += encode_line(lr(f"{bill.get('payment_mode') or 'Cash'} Payment", money(bill.get("paid_amount"))))
-    out += esc_bold(True) + encode_line(lr("New Balance", money(running_balance))) + esc_bold(False)
+    out += encode_line(lr("Previous Balance", compact_money(previous_balance)))
+    out += encode_line(lr(f"{bill.get('payment_mode') or 'Cash'} Payment", compact_money(bill.get("paid_amount"))))
+    out += esc_bold(True) + encode_line(lr("New Balance", compact_money(running_balance))) + esc_bold(False)
     if bill.get("notes"):
         out += encode_line(hr())
         for line in wrap_text(str(bill.get("notes")), CHARS_PER_LINE):
