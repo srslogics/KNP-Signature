@@ -3,11 +3,27 @@ setlocal
 cd /d "%~dp0"
 
 echo Installing build tools...
-python -m pip install --upgrade pip
-python -m pip install pywin32 pyinstaller
+where py >nul 2>nul
+if %errorlevel%==0 (
+  set "PY_CMD=py -3"
+) else (
+  set "PY_CMD=python"
+)
+
+%PY_CMD% -m pip install --upgrade pip
+%PY_CMD% -m pip install pywin32 pyinstaller
 
 echo Building KNP Signature Print Service.exe ...
-pyinstaller --clean --noconfirm print_bridge.spec
+%PY_CMD% -m PyInstaller --clean --noconfirm print_bridge.spec
+
+if not exist "%~dp0dist\KNP Signature Print Service.exe" (
+  echo.
+  echo Build failed. EXE was not created.
+  echo Check the messages above and try again.
+  echo.
+  pause
+  exit /b 1
+)
 
 echo.
 echo Build complete.
