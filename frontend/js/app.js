@@ -875,7 +875,7 @@ function loadPage(page) {
       title.innerText = "Access Control";
 
       content.innerHTML = `
-        <div class="container">
+        <div class="container access-control-page">
 
           <div class="page-intro">
             <span>Owner Only</span>
@@ -890,8 +890,8 @@ function loadPage(page) {
               </div>
             </div>
 
-            <div class="upload-box">
-              <div class="report-form auth-form auth-inline-form">
+            <div class="upload-box compact-form-card">
+              <div class="report-form auth-form auth-inline-form access-inline-form">
                 <input type="text" id="newOutletName" placeholder="Outlet name">
                 <input type="text" id="newOutletCode" placeholder="Code (optional)">
                 <button onclick="createOutlet()">Add Outlet</button>
@@ -906,7 +906,7 @@ function loadPage(page) {
                 <h2>Saved Outlets</h2>
               </div>
             </div>
-            <div id="outletAccessList" class="upload-box directory-intro">Loading outlets...</div>
+            <div id="outletAccessList" class="upload-box directory-intro access-list">Loading outlets...</div>
           </div>
 
           <div class="section">
@@ -917,8 +917,8 @@ function loadPage(page) {
               </div>
             </div>
 
-            <div class="upload-box">
-              <div class="report-form auth-form auth-inline-form">
+            <div class="upload-box compact-form-card">
+              <div class="report-form auth-form auth-inline-form access-inline-form access-user-form">
                 <input type="text" id="newUserDisplayName" placeholder="Display name">
                 <input type="text" id="newUsername" placeholder="Username">
                 <input type="password" id="newUserPassword" placeholder="Password">
@@ -941,7 +941,7 @@ function loadPage(page) {
                 <h2>Saved Users</h2>
               </div>
             </div>
-            <div id="userAccessList" class="upload-box directory-intro">Loading users...</div>
+            <div id="userAccessList" class="upload-box directory-intro access-list">Loading users...</div>
           </div>
 
         </div>
