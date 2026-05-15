@@ -1839,11 +1839,15 @@ input[type="file"] {
 
 .stock-rows {
   display: grid;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .actual-stock-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: end;
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -1864,68 +1868,64 @@ input[type="file"] {
 
 .manual-entry-row .row-remove-button,
 .actual-stock-row .row-remove-button {
-  align-self: end;
+  grid-column: 1 / -1;
+  align-self: start;
   justify-self: end;
-  width: 100%;
-  max-width: 170px;
+  width: auto;
+  max-width: none;
   min-width: 132px;
-  min-height: 48px;
+  min-height: 44px;
   padding-inline: 16px;
   white-space: nowrap;
 }
 
 .dealer-entry-row {
   grid-template-columns:
-    minmax(190px, 1.2fr)
-    minmax(170px, 0.95fr)
-    minmax(170px, 0.95fr)
-    minmax(120px, 0.7fr)
-    minmax(120px, 0.7fr)
-    minmax(120px, 0.7fr)
-    minmax(140px, 0.78fr)
-    minmax(140px, 0.78fr)
-    170px;
+    minmax(0, 2.1fr)
+    minmax(0, 1.45fr)
+    minmax(0, 1.45fr)
+    minmax(0, 1fr)
+    minmax(0, 1fr)
+    minmax(0, 1fr)
+    minmax(0, 1.1fr)
+    minmax(0, 1.1fr);
 }
 
 .vendor-entry-row {
   grid-template-columns:
-    minmax(190px, 1.2fr)
-    minmax(160px, 0.9fr)
-    minmax(160px, 0.9fr)
-    minmax(120px, 0.7fr)
-    minmax(120px, 0.7fr)
-    minmax(120px, 0.7fr)
-    170px;
+    minmax(0, 2fr)
+    minmax(0, 1.5fr)
+    minmax(0, 1.4fr)
+    minmax(0, 1fr)
+    minmax(0, 1fr)
+    minmax(0, 1fr);
 }
 
 .payment-entry-row {
   grid-template-columns:
-    minmax(220px, 1.2fr)
-    minmax(140px, 0.8fr)
-    minmax(140px, 0.8fr)
-    minmax(140px, 0.8fr)
-    170px;
+    minmax(0, 2fr)
+    minmax(0, 1.15fr)
+    minmax(0, 1.05fr)
+    minmax(0, 1.05fr);
 }
 
 .mortality-entry-row,
 .opening-stock-entry-row {
   grid-template-columns:
-    minmax(190px, 1.1fr)
-    minmax(140px, 0.8fr)
-    minmax(140px, 0.8fr)
-    170px;
+    minmax(0, 1.6fr)
+    minmax(0, 1fr)
+    minmax(0, 1fr);
 }
 
 .opening-balance-entry-row {
   grid-template-columns:
-    minmax(220px, 1.2fr)
-    minmax(170px, 0.9fr)
-    minmax(150px, 0.8fr)
-    170px;
+    minmax(0, 1.8fr)
+    minmax(0, 1fr)
+    minmax(0, 1fr);
 }
 
 .upload-actions {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: flex-start;
   flex-wrap: wrap;
@@ -1935,12 +1935,22 @@ input[type="file"] {
   border: 0;
   background: transparent !important;
   box-shadow: none !important;
-  max-width: 560px;
+  width: auto !important;
+  max-width: 100%;
 }
 
 .upload-actions button {
-  min-width: 210px;
-  min-height: 48px;
+  min-width: 190px;
+  min-height: 46px;
+}
+
+.section > .upload-box.upload-actions {
+  display: inline-flex;
+}
+
+.process-day-controls {
+  width: fit-content;
+  min-width: min(100%, 320px);
 }
 
 .directory-intro {
