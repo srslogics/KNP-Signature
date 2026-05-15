@@ -22,12 +22,13 @@ from fastapi.responses import Response, JSONResponse
 
 app = FastAPI()
 
-# Create tables
-Base.metadata.create_all(bind=engine)
-
 
 def ensure_database_schema():
     with engine.begin() as conn:
+        # Serialize boot-time schema work so parallel app instances don't deadlock
+        # while creating tables and adding columns on the same relations.
+        conn.execute(text("SELECT pg_advisory_xact_lock(4815162342)"))
+        Base.metadata.create_all(bind=conn)
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS outlets (
                 id UUID PRIMARY KEY,

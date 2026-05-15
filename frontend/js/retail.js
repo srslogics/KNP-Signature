@@ -1813,7 +1813,7 @@ async function sendCurrentRetailBill() {
     if (navigator.canShare && navigator.share && navigator.canShare({ files: [imageFile] })) {
       await navigator.share({
         title: `Retail Bill ${bill.bill_number}`,
-        text: `Retail bill ${bill.bill_number}`,
+        text: shareText,
         files: [imageFile]
       });
       showToast("Bill image shared");
@@ -1829,7 +1829,9 @@ async function sendCurrentRetailBill() {
         console.error("Clipboard copy failed", e);
       }
     }
-    const whatsappTarget = customerPhone ? `https://wa.me/${customerPhone}` : `https://wa.me/`;
+    const whatsappTarget = customerPhone
+      ? `https://wa.me/${customerPhone}?text=${encodeURIComponent(shareText)}`
+      : `https://wa.me/?text=${encodeURIComponent(shareText)}`;
     window.open(whatsappTarget, "_blank", "noopener,noreferrer");
     showToast("Receipt image downloaded. Attach it in WhatsApp.");
     startNextRetailBill();
