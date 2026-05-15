@@ -486,37 +486,39 @@ function loadPage(page) {
       title.innerText = "Daily Entries";
 
       content.innerHTML = `
-        <div class="container">
+        <div class="container upload-page">
 
           <div class="page-intro">
             <span>Daily Operations</span>
-            <h2>Enter, review, and process the day directly in the app</h2>
+            <h2>Capture purchases, sales, payments, mortality, and opening figures in one working screen</h2>
           </div>
 
-          <div class="section">
-            <div class="section-head">
-              <div>
-                <span>Step 1</span>
-                <h2>Select Working Date</h2>
+          <div class="section upload-date-section">
+            <div class="section-head upload-section-head">
+              <div class="upload-heading-block">
+                <span>Working Date</span>
+                <h2>Choose one date before entering the day</h2>
+                <p>This date is shared by manual entries and the day-processing step.</p>
               </div>
             </div>
-            <div class="upload-box">
+            <div class="upload-box upload-date-box">
               <input type="date" id="uploadWorkingDate">
             </div>
+            <div id="uploadStatus" class="notice upload-status" aria-live="polite"></div>
           </div>
 
-          <div id="uploadStatus" class="notice" aria-live="polite"></div>
           <datalist id="itemSuggestions"></datalist>
           <datalist id="manualPartySuggestions"></datalist>
 
           <div class="section">
-            <div class="section-head">
-              <div>
-                <span>Step 2</span>
-                <h2>Party Directory</h2>
+            <div class="section-head upload-section-head">
+              <div class="upload-heading-block">
+                <span>Party Directory</span>
+                <h2>Save party details once and reuse them everywhere</h2>
+                <p>Keep customer, vendor, and dealer names clean so billing and ledger stay consistent.</p>
               </div>
             </div>
-            <div class="upload-box directory-intro">
+            <div class="upload-box directory-intro upload-note-box">
               Save customer, vendor, or dealer name with phone number once. Billing and receipts can then fetch it automatically.
             </div>
             <div class="upload-box manual-entry-row party-directory-form">
@@ -536,19 +538,20 @@ function loadPage(page) {
               </select>
               <button type="button" class="directory-save-button" onclick="savePartyDirectoryEntry()">Save Party</button>
             </div>
-            <div class="upload-box directory-intro">
+            <div class="upload-box directory-intro upload-note-box">
               Pick a saved party from the dropdown to edit it, or leave the dropdown empty to add a new one.
             </div>
           </div>
 
           <div class="section">
-            <div class="section-head">
-              <div>
-                <span>Step 3</span>
-                <h2>Dealer Purchases</h2>
+            <div class="section-head upload-section-head">
+              <div class="upload-heading-block">
+                <span>Dealer Purchases</span>
+                <h2>Capture inward stock and transport loss together</h2>
+                <p>Use one row per dealer line so purchase and transport mortality stay tied to the same entry.</p>
               </div>
             </div>
-            <div class="upload-box directory-intro">
+            <div class="upload-box directory-intro upload-note-box">
               Add dealer purchase here. If any birds died in transport, add that directly in the same row under transport mortality.
             </div>
             <div id="dealerEntryRows" class="stock-rows"></div>
@@ -559,10 +562,11 @@ function loadPage(page) {
           </div>
 
           <div class="section">
-            <div class="section-head">
-              <div>
-                <span>Step 4</span>
-                <h2>Vendor Sales</h2>
+            <div class="section-head upload-section-head">
+              <div class="upload-heading-block">
+                <span>Vendor Sales</span>
+                <h2>Enter vendor-side movement cleanly</h2>
+                <p>Keep category, item, NAG, kgs, and rate in one compact sales row.</p>
               </div>
             </div>
             <div id="vendorEntryRows" class="stock-rows"></div>
@@ -573,10 +577,11 @@ function loadPage(page) {
           </div>
 
           <div class="section">
-            <div class="section-head">
-              <div>
-                <span>Step 5</span>
-                <h2>Payments</h2>
+            <div class="section-head upload-section-head">
+              <div class="upload-heading-block">
+                <span>Payments</span>
+                <h2>Log incoming and outgoing money separately from billing</h2>
+                <p>Use this for direct party payments that are not being entered from the counter billing screen.</p>
               </div>
             </div>
             <div id="paymentEntryRows" class="stock-rows"></div>
@@ -587,10 +592,11 @@ function loadPage(page) {
           </div>
 
           <div class="section">
-            <div class="section-head">
-              <div>
-                <span>Step 6</span>
-                <h2>Shop Mortality</h2>
+            <div class="section-head upload-section-head">
+              <div class="upload-heading-block">
+                <span>Shop Mortality</span>
+                <h2>Record post-arrival mortality separately</h2>
+                <p>This is for shop-side loss only. Transport mortality belongs inside dealer purchase rows.</p>
               </div>
             </div>
             <div id="mortalityEntryRows" class="stock-rows"></div>
@@ -601,10 +607,11 @@ function loadPage(page) {
           </div>
 
           <div class="section">
-            <div class="section-head">
-              <div>
-                <span>Step 7</span>
-                <h2>Process Day</h2>
+            <div class="section-head upload-section-head">
+              <div class="upload-heading-block">
+                <span>Process Day</span>
+                <h2>Close the day with actual stock</h2>
+                <p>Enter actual closing NAG and weight per hen type, then process the day to calculate leakage.</p>
               </div>
             </div>
             <div class="upload-box process-day-controls">
@@ -624,10 +631,11 @@ function loadPage(page) {
           </div>
 
           <div class="section">
-            <div class="section-head">
-              <div>
+            <div class="section-head upload-section-head">
+              <div class="upload-heading-block">
                 <span>Initial Setup</span>
                 <h2>Opening Balance</h2>
+                <p>Use this when carrying forward party receivable or payable at the start of the system.</p>
               </div>
             </div>
             <div id="openingBalanceEntryRows" class="stock-rows"></div>
@@ -638,7 +646,13 @@ function loadPage(page) {
           </div>
 
           <div class="section">
-            <h2>Opening Stock</h2>
+            <div class="section-head upload-section-head">
+              <div class="upload-heading-block">
+                <span>Initial Setup</span>
+                <h2>Opening Stock</h2>
+                <p>Set the beginning live stock so the first stock sheet starts from a real baseline.</p>
+              </div>
+            </div>
             <div id="openingStockEntryRows" class="stock-rows"></div>
             <div class="upload-box upload-actions">
               <button onclick="addOpeningStockEntryRow()">Add Opening Stock Row</button>

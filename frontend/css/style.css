@@ -873,6 +873,64 @@ input[type="file"] {
   align-items: center;
 }
 
+.upload-page {
+  display: grid;
+  gap: 18px;
+}
+
+.upload-page .section {
+  padding: 22px 24px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.97), rgb(252 247 241 / 0.94));
+}
+
+.upload-date-section {
+  position: sticky;
+  top: 18px;
+  z-index: 2;
+  backdrop-filter: blur(10px);
+}
+
+.upload-section-head {
+  margin-bottom: 14px;
+}
+
+.upload-heading-block {
+  max-width: 760px;
+}
+
+.upload-heading-block h2 {
+  margin-bottom: 6px;
+}
+
+.upload-heading-block p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.upload-page .upload-box {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fffdfa, #f9f1e8);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.6);
+}
+
+.upload-date-box {
+  justify-content: flex-start;
+}
+
+.upload-date-box input {
+  width: 220px;
+}
+
+.upload-status {
+  margin-top: 14px;
+}
+
 .upload-box button:not(:last-child),
 .section .upload-box button[onclick^="preview"],
 .section .upload-box button[onclick^="download"] {
@@ -1751,10 +1809,10 @@ input[type="file"] {
 }
 
 .actual-stock-row {
-  padding: 12px;
+  padding: 16px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-soft);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fff, #fbf5ee);
 }
 
 .manual-entry-row {
@@ -1762,6 +1820,11 @@ input[type="file"] {
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   align-items: end;
   gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fff, #fcf7f1);
+  box-shadow: 0 8px 20px rgb(15 23 42 / 0.04);
 }
 
 .manual-entry-row .row-remove-button,
@@ -1829,10 +1892,14 @@ input[type="file"] {
 .upload-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
   flex-wrap: wrap;
   gap: 14px;
-  margin-top: 10px;
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .upload-actions button {
@@ -1843,6 +1910,10 @@ input[type="file"] {
 .directory-intro {
   color: var(--muted);
   line-height: 1.5;
+}
+
+.upload-note-box {
+  font-size: 14px;
 }
 
 .party-directory-form {
@@ -1861,6 +1932,10 @@ input[type="file"] {
   min-height: 48px;
   align-self: end;
   justify-self: end;
+}
+
+.process-day-controls {
+  justify-content: flex-start;
 }
 
 .party-directory-table {
