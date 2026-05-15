@@ -1777,6 +1777,8 @@ function getRetailBillShareText(bill) {
   const receiptOutstanding = bill.customer_name
     ? Number((bill.party_balance ?? bill.outstanding_amount) || 0)
     : Number(bill.outstanding_amount || 0);
+  lines.push(`Total NAG: ${formatBillNag(bill.total_nag || bill.total_quantity || 0)}`);
+  lines.push(`Total KGS: ${Number(bill.total_weight || 0).toFixed(3)}`);
   lines.push(`Total Amount: Rs ${formatBillMoney(bill.total_amount)}`);
   lines.push(`Received: Rs ${formatBillMoney(bill.paid_amount)}`);
   lines.push(`Remaining: Rs ${formatBillMoney(receiptOutstanding)}`);

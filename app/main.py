@@ -1388,7 +1388,13 @@ def merge_party_type(existing_type: str | None, new_type: str | None):
     return "BOTH"
 
 
-def update_party_details(party, party_type: str | None = None, phone: str | None = None, address: str | None = None):
+def update_party_details(
+    party,
+    party_type: str | None = None,
+    phone: str | None = None,
+    address: str | None = None,
+    overwrite_contact: bool = False
+):
     if party is None:
         return
 
@@ -1398,9 +1404,9 @@ def update_party_details(party, party_type: str | None = None, phone: str | None
 
     cleaned_phone = str(phone or "").strip()
     cleaned_address = str(address or "").strip()
-    if cleaned_phone and not (party.phone or "").strip():
+    if cleaned_phone and (overwrite_contact or not (party.phone or "").strip()):
         party.phone = cleaned_phone
-    if cleaned_address and not (party.address or "").strip():
+    if cleaned_address and (overwrite_contact or not (party.address or "").strip()):
         party.address = cleaned_address
 
 
@@ -3187,6 +3193,7 @@ def save_party_directory(payload: dict = Body(...), db: Session = Depends(get_db
 
     for index, row in enumerate(rows, start=1):
         try:
+            party_id_raw = str(row.get("party_id") or "").strip()
             party_name = str(row.get("name") or row.get("party") or "").strip()
             party_type = str(row.get("type") or "BOTH").strip().upper() or "BOTH"
             phone = str(row.get("phone") or "").strip()
@@ -3197,13 +3204,41 @@ def save_party_directory(payload: dict = Body(...), db: Session = Depends(get_db
                 row_error(errors, index, "Enter party name")
                 continue
 
-            party = get_party_by_name(db, party_name)
+            party = None
+            if party_id_raw:
+                try:
+                    party = db.query(models.Party).filter_by(id=UUID(party_id_raw)).first()
+                except ValueError:
+                    party = None
+            if party is None:
+                party = get_party_by_name(db, party_name)
             if party:
-                had_details = bool((party.phone or "").strip() or (party.address or "").strip())
-                update_party_details(party, party_type, phone, address)
+                had_name = party.name
+                had_type = party.type or ""
+                had_phone = (party.phone or "").strip()
+                had_address = (party.address or "").strip()
+                update_party_details(party, party_type, phone, address, overwrite_contact=True)
                 if party.name != party_name:
                     party.name = party_name
-                updated += 1 if had_details or phone or address or party_type else 0
+                    party.normalized_name = normalize_party_name(party_name)
+                    normalized_alias = party.normalized_name
+                    alias = db.query(models.PartyAlias).filter_by(
+                        party_id=party.id,
+                        normalized_alias=normalized_alias
+                    ).first()
+                    if not alias:
+                        db.add(models.PartyAlias(
+                            alias=party_name,
+                            normalized_alias=normalized_alias,
+                            party_id=party.id
+                        ))
+                changed = any([
+                    had_name != party.name,
+                    had_type != (party.type or ""),
+                    had_phone != (party.phone or "").strip(),
+                    had_address != (party.address or "").strip()
+                ])
+                updated += 1 if changed else 0
             else:
                 get_or_create_party(db, party_name, party_type, {}, phone=phone, address=address)
                 inserted += 1

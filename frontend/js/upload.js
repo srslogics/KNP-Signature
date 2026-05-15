@@ -206,6 +206,10 @@ function initPartyDirectory() {
   const nameInput = document.getElementById("directoryPartyName");
   if (!nameInput) return;
 
+  nameInput.addEventListener("input", () => {
+    const partyId = document.getElementById("directoryPartyId");
+    if (partyId) partyId.value = "";
+  });
   nameInput.addEventListener("input", suggestDirectoryParties);
   nameInput.addEventListener("focus", suggestDirectoryParties);
   nameInput.addEventListener("change", () => hydrateDirectoryPartyForm(nameInput.value));
@@ -616,16 +620,22 @@ async function suggestDirectoryParties() {
 
 async function hydrateDirectoryPartyForm(name) {
   const query = String(name || "").trim();
-  if (query.length < 2) return;
+  if (query.length < 2) {
+    const partyIdInput = document.getElementById("directoryPartyId");
+    if (partyIdInput) partyIdInput.value = "";
+    return;
+  }
 
   try {
     const data = await optionalApiCall(`/party/profile?name=${encodeURIComponent(query)}`, null, "GET", null, { cache: false });
     const party = data?.party;
     if (!party) return;
 
+    const partyIdInput = document.getElementById("directoryPartyId");
     const phoneInput = document.getElementById("directoryPartyPhone");
     const addressInput = document.getElementById("directoryPartyAddress");
     const typeInput = document.getElementById("directoryPartyType");
+    if (partyIdInput) partyIdInput.value = party.id || "";
     if (phoneInput) phoneInput.value = party.phone || "";
     if (addressInput) addressInput.value = party.address || "";
     if (typeInput) typeInput.value = party.type || "BOTH";
@@ -639,12 +649,18 @@ async function selectDirectoryParty(name) {
     resetDirectoryPartyForm(false);
     return;
   }
+  const select = document.getElementById("directoryPartySelect");
   const nameInput = document.getElementById("directoryPartyName");
+  const partyIdInput = document.getElementById("directoryPartyId");
   if (nameInput) nameInput.value = name;
+  if (partyIdInput && select?.selectedOptions?.[0]) {
+    partyIdInput.value = select.selectedOptions[0].dataset.partyId || "";
+  }
   await hydrateDirectoryPartyForm(name);
 }
 
 async function savePartyDirectoryEntry() {
+  const partyId = document.getElementById("directoryPartyId")?.value.trim() || "";
   const name = document.getElementById("directoryPartyName")?.value.trim();
   const phone = document.getElementById("directoryPartyPhone")?.value.trim() || "";
   const address = document.getElementById("directoryPartyAddress")?.value.trim() || "";
@@ -662,7 +678,7 @@ async function savePartyDirectoryEntry() {
     const data = await apiCall(
       "/party-directory",
       "POST",
-      JSON.stringify({ rows: [{ name, phone, address, type }] }),
+      JSON.stringify({ rows: [{ party_id: partyId, name, phone, address, type }] }),
       { "Content-Type": "application/json" }
     );
 
@@ -702,6 +718,7 @@ async function loadPartyDirectory() {
         const option = document.createElement("option");
         option.value = party.name || "";
         option.textContent = party.phone ? `${party.name} - ${party.phone}` : party.name;
+        option.dataset.partyId = party.id || "";
         select.appendChild(option);
       });
     }
@@ -718,12 +735,14 @@ async function loadPartyDirectory() {
 
 function resetDirectoryPartyForm(resetSelect = true) {
   const select = document.getElementById("directoryPartySelect");
+  const partyId = document.getElementById("directoryPartyId");
   const name = document.getElementById("directoryPartyName");
   const phone = document.getElementById("directoryPartyPhone");
   const address = document.getElementById("directoryPartyAddress");
   const type = document.getElementById("directoryPartyType");
 
   if (resetSelect && select) select.value = "";
+  if (partyId) partyId.value = "";
   if (name) name.value = "";
   if (phone) phone.value = "";
   if (address) address.value = "";

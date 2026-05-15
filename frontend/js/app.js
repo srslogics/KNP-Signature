@@ -525,6 +525,7 @@ function loadPage(page) {
               <select id="directoryPartySelect" onchange="selectDirectoryParty(this.value)">
                 <option value="">Select saved party</option>
               </select>
+              <input type="hidden" id="directoryPartyId">
               <div class="typeahead-field">
                 <input type="text" id="directoryPartyName" placeholder="Name" autocomplete="off">
                 <div id="directoryPartySuggestBox" class="typeahead-box"></div>
