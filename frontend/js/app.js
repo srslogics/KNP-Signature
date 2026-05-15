@@ -33,7 +33,7 @@ function getStoredOutletId() {
 }
 
 function pageRequiresSingleOutlet(page) {
-  return ["retail", "upload", "daily-sheet"].includes(page);
+  return ["retail", "billing-setup", "upload", "daily-sheet"].includes(page);
 }
 
 function getSingleOutletFallback() {
@@ -1019,7 +1019,7 @@ function loadPage(page) {
               <div class="section-head">
                 <div>
                   <span>New Bill</span>
-                  <h2 id="retailModeTitle">Regular Billing</h2>
+                  <h2 id="retailModeTitle">Retail Billing</h2>
                 </div>
                 <button type="button" onclick="resetRetailForm()">New Bill</button>
               </div>
@@ -1028,16 +1028,15 @@ function loadPage(page) {
               <datalist id="retailCustomerSuggestions"></datalist>
 
               <div class="retail-mode-switch" role="tablist" aria-label="Retail billing mode">
-                <button type="button" id="retailModeRegular" class="retail-mode-button active" onclick="setRetailBillingMode('regular')">Regular Billing</button>
-                <button type="button" id="retailModeDressed" class="retail-mode-button" onclick="setRetailBillingMode('dressed')">Dressed Billing</button>
+                <button type="button" id="retailModeRegular" class="retail-mode-button active" onclick="setRetailBillingMode('regular')">Billing</button>
                 <button type="button" id="retailModePayment" class="retail-mode-button" onclick="setRetailBillingMode('payment')">Payment Receipt</button>
               </div>
 
-              <div id="retailSalesSection" class="retail-billing-panel retail-billing-section">
+              <div id="retailSalesSection" class="retail-billing-panel retail-billing-section retail-combined-billing">
                 <div class="retail-shortcuts">
                   <div class="retail-shortcuts-head">
                     <span>Bill Details</span>
-                    <p>These details are shared for the current regular or dressed bill.</p>
+                    <p>Use one bill for regular items, dressed items, or both together.</p>
                   </div>
                   <div class="retail-form-grid">
                     <input type="date" id="retailDate" aria-label="Retail bill date">
@@ -1083,7 +1082,7 @@ function loadPage(page) {
                   <div id="retailRegularRows" class="retail-items retail-items-horizontal"></div>
                 </div>
 
-                <div id="retailDressedSection" class="retail-billing-section" style="display:none;">
+                <div id="retailDressedSection" class="retail-billing-section" >
                   <div class="retail-shortcuts">
                     <div class="retail-shortcuts-head">
                       <span>Dressed Shortcuts</span>
@@ -1104,7 +1103,8 @@ function loadPage(page) {
                   <textarea id="retailNotes" placeholder="Notes for bill"></textarea>
                 </div>
                 <div class="retail-item-actions">
-                  <button type="button" id="retailAddItemButton" onclick="addRetailItemForCurrentMode()">Add Item</button>
+                  <button type="button" id="retailAddRegularItemButton" onclick="addRegularRetailRow()">Add Regular Item</button>
+                  <button type="button" id="retailAddDressedItemButton" onclick="addDressedRetailRow()">Add Dressed Item</button>
                 </div>
                 <div class="report-actions retail-actions">
                   <button type="button" onclick="saveRetailBill({ autoStartNext: true })">Save Bill</button>
@@ -1155,70 +1155,6 @@ function loadPage(page) {
                 </div>
               </div>
 
-              <div class="retail-billing-panel retail-setup-panel">
-                <details class="retail-admin-toggle">
-                  <summary>Setup Tools</summary>
-
-                  <div class="retail-shortcut-manager">
-                  <div class="retail-shortcuts-head">
-                    <span>Shortcut Manager</span>
-                      <p id="shortcutManagerHelp">Add your own quick items with default rate for this billing type.</p>
-                    </div>
-                    <div class="retail-shortcut-form">
-                      <input type="text" id="shortcutName" placeholder="Item name">
-                      <input type="number" id="shortcutRate" placeholder="Default rate" min="0" step="0.01">
-                      <select id="shortcutLineType" style="display:none;">
-                        <option value="STANDARD">Regular</option>
-                        <option value="DRESSED">Dressed</option>
-                      </select>
-                      <select id="shortcutUnit">
-                        <option value="KGS">KGS</option>
-                        <option value="PCS">PCS</option>
-                      </select>
-                      <button type="button" onclick="saveRetailShortcut()">Save Shortcut</button>
-                    </div>
-                    <div id="retailShortcutManagerList" class="retail-shortcut-list retail-shortcut-list-managed"></div>
-                  </div>
-
-                  <div class="retail-shortcuts" id="dressedStockSetupSection">
-                    <div class="retail-shortcuts-head">
-                      <span>Dressed Stock Entry</span>
-                      <p>Enter live stock and dressed weight. Bills deduct dressed weight automatically.</p>
-                    </div>
-                    <div id="dressedStockRows" class="retail-items"></div>
-                    <div class="retail-item-actions">
-                      <button type="button" onclick="addDressedStockRow()">Add Dressed Stock</button>
-                      <button type="button" onclick="saveDressedStock()">Save Dressed Stock</button>
-                    </div>
-                    <div class="retail-saved-subsection">
-                      <div class="retail-shortcuts-head retail-saved-head">
-                        <span>Saved Dressed Stock</span>
-                        <p>Review dressed stock entries saved for the selected bill date.</p>
-                      </div>
-                      <div class="card table-card">
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>Date</th>
-                              <th>Item</th>
-                              <th>Live NAG</th>
-                              <th>Live Weight</th>
-                              <th>Dressed Weight</th>
-                              <th>Remaining</th>
-                            </tr>
-                          </thead>
-                          <tbody id="dressedStockSavedBody">
-                            <tr>
-                              <td colspan="6" class="empty">No dressed stock saved yet</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-                </details>
-              </div>
-
               <datalist id="retailItemSuggestions"></datalist>
             </div>
 
@@ -1263,7 +1199,7 @@ function loadPage(page) {
             </div>
           </div>
 
-          <div class="section" id="paymentReceiptHistorySection" style="display:none;">
+          <div class="section" id="paymentReceiptHistorySection" >
             <div class="section-head">
               <div>
                 <span>Saved Payment Receipts</span>
@@ -1297,6 +1233,110 @@ function loadPage(page) {
 
       setTimeout(() => {
         if (typeof initRetailPage === "function") initRetailPage();
+      }, 100);
+    }
+
+    // --- Billing Setup Page
+    else if (page === "billing-setup") {
+      title.innerText = "Billing Setup";
+
+      content.innerHTML = `
+        <div class="container">
+
+          <div class="page-intro">
+            <span>Billing Admin</span>
+            <h2>Manage shortcut items and dressed stock without cluttering the live billing counter</h2>
+          </div>
+
+          <div class="section retail-setup-page">
+            <div class="section-head">
+              <div>
+                <span>Setup Tools</span>
+                <h2 id="retailModeTitle">Regular Setup</h2>
+              </div>
+            </div>
+
+            <div class="retail-shortcuts">
+              <div class="retail-shortcuts-head">
+                <span>Working Date</span>
+                <p>Use one outlet and one billing date while preparing shortcuts or dressed stock.</p>
+              </div>
+              <div class="retail-form-grid retail-setup-date-grid">
+                <input type="date" id="retailDate" aria-label="Billing setup date">
+              </div>
+            </div>
+
+            <div class="retail-mode-switch" role="tablist" aria-label="Billing setup mode">
+              <button type="button" id="retailModeRegular" class="retail-mode-button active" onclick="setRetailBillingMode('regular')">Regular Shortcuts</button>
+              <button type="button" id="retailModeDressed" class="retail-mode-button" onclick="setRetailBillingMode('dressed')">Dressed Setup</button>
+            </div>
+
+            <div class="retail-billing-panel retail-setup-panel retail-setup-panel-standalone">
+              <div class="retail-shortcut-manager">
+                <div class="retail-shortcuts-head">
+                  <span>Shortcut Manager</span>
+                  <p id="shortcutManagerHelp">Add your own quick items with default rate for this billing type.</p>
+                </div>
+                <div class="retail-shortcut-form">
+                  <input type="text" id="shortcutName" placeholder="Item name">
+                  <input type="number" id="shortcutRate" placeholder="Default rate" min="0" step="0.01">
+                  <select id="shortcutLineType" >
+                    <option value="STANDARD">Regular</option>
+                    <option value="DRESSED">Dressed</option>
+                  </select>
+                  <select id="shortcutUnit">
+                    <option value="KGS">KGS</option>
+                    <option value="PCS">PCS</option>
+                  </select>
+                  <button type="button" onclick="saveRetailShortcut()">Save Shortcut</button>
+                </div>
+                <div id="retailShortcutManagerList" class="retail-shortcut-list retail-shortcut-list-managed"></div>
+              </div>
+
+              <div class="retail-shortcuts" id="dressedStockSetupSection" >
+                <div class="retail-shortcuts-head">
+                  <span>Dressed Stock Entry</span>
+                  <p>Enter live stock and dressed weight. Bills deduct dressed weight automatically.</p>
+                </div>
+                <div id="dressedStockRows" class="retail-items"></div>
+                <div class="retail-item-actions">
+                  <button type="button" onclick="addDressedStockRow()">Add Dressed Stock</button>
+                  <button type="button" onclick="saveDressedStock()">Save Dressed Stock</button>
+                </div>
+                <div class="retail-saved-subsection">
+                  <div class="retail-shortcuts-head retail-saved-head">
+                    <span>Saved Dressed Stock</span>
+                    <p>Review dressed stock entries saved for the selected billing date.</p>
+                  </div>
+                  <div class="card table-card">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Item</th>
+                          <th>Live NAG</th>
+                          <th>Live Weight</th>
+                          <th>Dressed Weight</th>
+                          <th>Remaining</th>
+                        </tr>
+                      </thead>
+                      <tbody id="dressedStockSavedBody">
+                        <tr>
+                          <td colspan="6" class="empty">No dressed stock saved yet</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      `;
+
+      setTimeout(() => {
+        if (typeof initRetailSetupPage === "function") initRetailSetupPage();
       }, 100);
     }
 

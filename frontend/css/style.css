@@ -1184,6 +1184,23 @@ input[type="file"] {
   margin-top: 18px;
 }
 
+.retail-setup-page {
+  display: grid;
+  gap: 18px;
+}
+
+.retail-setup-page .retail-mode-switch {
+  margin-top: 0;
+}
+
+.retail-setup-panel-standalone {
+  margin-top: 0;
+}
+
+.retail-setup-date-grid {
+  grid-template-columns: minmax(220px, 320px);
+}
+
 .retail-saved-subsection {
   margin-top: 16px;
 }

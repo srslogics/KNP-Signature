@@ -1243,7 +1243,14 @@ def serialize_dressed_stock_entry(entry):
 
 def serialize_retail_bill(bill, items):
     created_at = bill.created_at or datetime.utcnow()
-    bill_mode = "dressed" if any((item.line_type or "STANDARD").upper() == "DRESSED" for item in items) else "regular"
+    has_dressed = any((item.line_type or "STANDARD").upper() == "DRESSED" for item in items)
+    has_regular = any((item.line_type or "STANDARD").upper() != "DRESSED" for item in items)
+    if has_regular and has_dressed:
+        bill_mode = "both"
+    elif has_dressed:
+        bill_mode = "dressed"
+    else:
+        bill_mode = "regular"
 
     return {
         "id": str(bill.id),
@@ -4152,10 +4159,12 @@ def list_retail_bills(date: str = None, db: Session = Depends(get_db), current_o
             models.RetailBillItem.bill_id.in_(bill_ids)
         ).all()
         for row in item_rows:
-            if str(row.line_type or "STANDARD").upper() == "DRESSED":
-                mode_map[row.bill_id] = "dressed"
+            current_mode = mode_map.get(row.bill_id)
+            row_mode = "dressed" if str(row.line_type or "STANDARD").upper() == "DRESSED" else "regular"
+            if current_mode and current_mode != row_mode:
+                mode_map[row.bill_id] = "both"
             else:
-                mode_map.setdefault(row.bill_id, "regular")
+                mode_map.setdefault(row.bill_id, row_mode)
 
     return {
         "results": [
