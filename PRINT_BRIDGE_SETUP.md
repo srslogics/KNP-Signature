@@ -59,7 +59,12 @@ That does two things:
 - opens the frontend
 
 If the EXE exists, the launcher uses the EXE automatically.
-If not, it falls back to `python print_bridge.py`.
+If not, it falls back to a background Python launch:
+
+- `pythonw print_bridge.py` when available
+- otherwise `py -3 print_bridge.py`
+
+The launcher also waits briefly for `http://127.0.0.1:9876/health` before opening the app, so the client does not need to manually start `print_bridge.py` in a terminal.
 
 ### One-time automatic startup setup
 
