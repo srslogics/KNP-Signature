@@ -1777,11 +1777,13 @@ function getRetailBillShareText(bill) {
   const receiptOutstanding = bill.customer_name
     ? Number((bill.party_balance ?? bill.outstanding_amount) || 0)
     : Number(bill.outstanding_amount || 0);
+  const previousBalance = Math.max(0, receiptOutstanding - Number(bill.outstanding_amount || 0));
+  lines.push(`Old Balance: Rs ${formatBillMoney(previousBalance)}`);
   lines.push(`Total NAG: ${formatBillNag(bill.total_nag || bill.total_quantity || 0)}`);
   lines.push(`Total KGS: ${Number(bill.total_weight || 0).toFixed(3)}`);
   lines.push(`Total Amount: Rs ${formatBillMoney(bill.total_amount)}`);
   lines.push(`Received: Rs ${formatBillMoney(bill.paid_amount)}`);
-  lines.push(`Remaining: Rs ${formatBillMoney(receiptOutstanding)}`);
+  lines.push(`Active Balance: Rs ${formatBillMoney(receiptOutstanding)}`);
   lines.push(`Mode: ${bill.payment_mode || "Cash"}`);
   if (bill.notes) {
     lines.push(`Notes: ${bill.notes}`);
@@ -2530,9 +2532,9 @@ function getRetailReceiptMarkup(bill) {
       </div>
       <div class="thermal-rule">----------------------------------------------</div>
       <div class="thermal-summary thermal-balance-summary">
-        <p><span>Previous Balance</span><strong>${formatBillMoney(previousBalance)}</strong></p>
+        <p><span>Old Balance</span><strong>${formatBillMoney(previousBalance)}</strong></p>
         <p><span>${escapeHtml(bill.payment_mode || "Cash")} Payment</span><strong>${formatBillMoney(bill.paid_amount)}</strong></p>
-        <p><span>New Balance</span><strong>${formatBillMoney(receiptOutstanding)}</strong></p>
+        <p><span>Active Balance</span><strong>${formatBillMoney(receiptOutstanding)}</strong></p>
       </div>
 
       ${bill.requires_customer && !bill.customer_name ? `<div class="thermal-notes">Known customer name is required when this bill has credit outstanding.</div>` : ""}

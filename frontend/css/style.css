@@ -1856,7 +1856,7 @@ input[type="file"] {
 
 .manual-entry-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: end;
   gap: 14px;
   padding: 16px;
@@ -1875,7 +1875,7 @@ input[type="file"] {
 .actual-stock-row .row-remove-button {
   grid-column: 1 / -1;
   align-self: start;
-  justify-self: end;
+  justify-self: start;
   width: auto;
   max-width: none;
   min-width: 132px;
@@ -1885,24 +1885,24 @@ input[type="file"] {
 }
 
 .dealer-entry-row {
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .vendor-entry-row {
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .payment-entry-row {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .mortality-entry-row,
 .opening-stock-entry-row {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .opening-balance-entry-row {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: minmax(220px, 1.3fr) minmax(180px, 1fr) minmax(180px, 0.85fr);
 }
 
 .upload-actions {
@@ -1953,7 +1953,7 @@ input[type="file"] {
 }
 
 .party-directory-form {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: minmax(220px, 1.1fr) minmax(220px, 1fr) minmax(180px, 0.9fr) minmax(220px, 1fr) minmax(180px, 0.8fr);
   align-items: end;
 }
 
@@ -2013,6 +2013,42 @@ input[type="file"] {
 
 .process-day-controls {
   justify-content: flex-start;
+}
+
+.actual-stock-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.stock-rows {
+  display: grid;
+  gap: 16px;
+}
+
+.upload-page .section {
+  overflow: hidden;
+}
+
+.upload-page .section > .upload-box,
+.upload-page .stock-rows,
+.upload-page .upload-actions {
+  max-width: 1120px;
+}
+
+.upload-page .upload-actions {
+  margin-top: 16px;
+}
+
+.upload-page .typeahead-field,
+.upload-page .typeahead-field input,
+.upload-page .manual-entry-row input,
+.upload-page .manual-entry-row select,
+.upload-page .actual-stock-row input,
+.upload-page .actual-stock-row select {
+  width: 100%;
+  min-width: 0;
 }
 
 .party-directory-table {
@@ -2548,6 +2584,30 @@ canvas {
   }
 
   .analytics-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1280px) {
+  .dealer-entry-row,
+  .payment-entry-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .party-directory-form {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 960px) {
+  .dealer-entry-row,
+  .vendor-entry-row,
+  .payment-entry-row,
+  .mortality-entry-row,
+  .opening-stock-entry-row,
+  .opening-balance-entry-row,
+  .actual-stock-row,
+  .party-directory-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
