@@ -379,6 +379,17 @@ input[type="file"] {
   padding: 4px 0 2px;
 }
 
+.page-intro-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.page-intro-actions button {
+  flex: 0 0 auto;
+}
+
 .page-intro span,
 .section-head span {
   display: inline-block;

@@ -490,10 +490,6 @@ function loadPage(page) {
       content.innerHTML = `
         <div class="container upload-page">
 
-          <div class="page-intro">
-            <h2>Daily Entries</h2>
-          </div>
-
           <div class="section upload-date-section section-full">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
@@ -669,10 +665,6 @@ function loadPage(page) {
       content.innerHTML = `
         <div class="container">
 
-          <div class="page-intro dashboard-intro">
-            <h2>Business Dashboard</h2>
-          </div>
-
           <div class="card toolbar dashboard-toolbar">
             <div class="dashboard-toolbar-copy">
               <h3>Working Date</h3>
@@ -843,10 +835,6 @@ function loadPage(page) {
       content.innerHTML = `
         <div class="container access-control-page">
 
-          <div class="page-intro">
-            <h2>Access Control</h2>
-          </div>
-
           <div class="section">
             <div class="section-head">
               <div>
@@ -923,10 +911,6 @@ function loadPage(page) {
       content.innerHTML = `
         <div class="container">
 
-          <div class="page-intro">
-            <h2>Ledger</h2>
-          </div>
-
           <div class="card search-card toolbar">
             <div class="typeahead-field">
               <input type="text" id="party" placeholder="Search party..." autocomplete="off" oninput="suggestParties()" onfocus="suggestParties()" onblur="scheduleSuggestionBoxHide('ledgerPartySuggestBox')">
@@ -983,19 +967,12 @@ function loadPage(page) {
       content.innerHTML = `
         <div class="container">
 
-          <div class="page-intro">
-            <h2>Retail Billing</h2>
+          <div class="page-intro-actions">
+            <button type="button" onclick="resetRetailForm()">New Bill</button>
           </div>
 
           <div class="retail-layout">
             <div class="section">
-              <div class="section-head">
-                <div>
-                  <h2 id="retailModeTitle">Retail Billing</h2>
-                </div>
-                <button type="button" onclick="resetRetailForm()">New Bill</button>
-              </div>
-
               <div id="retailOfflineBanner" class="notice info" style="display:none;"></div>
               <datalist id="retailCustomerSuggestions"></datalist>
 
@@ -1212,10 +1189,6 @@ function loadPage(page) {
       content.innerHTML = `
         <div class="container">
 
-          <div class="page-intro">
-            <h2>Billing Setup</h2>
-          </div>
-
           <div class="section retail-setup-page">
             <div class="section-head">
               <div>
@@ -1310,10 +1283,6 @@ function loadPage(page) {
       content.innerHTML = `
         <div class="container">
 
-          <div class="page-intro">
-            <h2>Daily Sheet</h2>
-          </div>
-
           <div class="card filter toolbar">
             <select id="dailySheetType">
               <option value="stock">Stock Sheet</option>
@@ -1351,10 +1320,6 @@ function loadPage(page) {
 
       content.innerHTML = `
         <div class="container">
-
-          <div class="page-intro">
-            <h2>Analytics</h2>
-          </div>
 
           <div class="card filter toolbar">
             <input type="date" id="startDate">
@@ -1440,10 +1405,6 @@ function loadPage(page) {
 
       content.innerHTML = `
         <div class="container">
-
-          <div class="page-intro">
-            <h2>Reports</h2>
-          </div>
 
           <div class="section">
             <div class="section-head">
