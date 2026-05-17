@@ -2691,31 +2691,132 @@ function normalizeRetailBillFingerprintValue(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeRetailBillNumberValue(value) {
+  return String(value || "").trim();
+}
+
+function normalizeRetailBillNumericValue(value, decimals = 2) {
+  return Number(value || 0).toFixed(decimals);
+}
+
+function normalizeRetailBillLineTypeValue(value) {
+  return String(value || "STANDARD").trim().toUpperCase();
+}
+
+function normalizeRetailBillItemNameValue(value) {
+  return normalizeRetailBillFingerprintValue(value).replace(/\s+/g, " ");
+}
+
+function retailBillLineSignature(item) {
+  return [
+    normalizeRetailBillLineTypeValue(item?.line_type),
+    normalizeRetailBillItemNameValue(item?.item_name),
+    normalizeRetailBillNumericValue(item?.quantity ?? item?.nag ?? 0, 3),
+    normalizeRetailBillFingerprintValue(item?.unit || ""),
+    normalizeRetailBillNumericValue(item?.weight || 0, 3),
+    normalizeRetailBillNumericValue(item?.rate || 0, 3),
+    normalizeRetailBillNumericValue(item?.amount || 0, 2)
+  ].join("|");
+}
+
+function retailBillItemsSignature(bill) {
+  const items = Array.isArray(bill?.items) ? [...bill.items] : [];
+  return items
+    .sort((a, b) => Number(a?.line_order || 0) - Number(b?.line_order || 0))
+    .map(retailBillLineSignature)
+    .join("||");
+}
+
+function retailBillSummarySignature(bill) {
+  return [
+    String(bill?.date || ""),
+    normalizeRetailBillNumberValue(bill?.bill_number),
+    normalizeRetailBillFingerprintValue(bill?.customer_name),
+    normalizeRetailBillFingerprintValue(bill?.customer_phone).replace(/\D/g, ""),
+    normalizeRetailBillMode(bill),
+    normalizeRetailBillNumericValue(bill?.total_amount || 0, 2),
+    normalizeRetailBillNumericValue(bill?.paid_amount || 0, 2),
+    normalizeRetailBillNumericValue(bill?.outstanding_amount || 0, 2),
+    normalizeRetailBillNumericValue(bill?.ice_amount || 0, 2),
+    normalizeRetailBillNumericValue(bill?.total_quantity ?? bill?.total_nag ?? 0, 3),
+    normalizeRetailBillNumericValue(bill?.total_weight || 0, 3),
+    String(Array.isArray(bill?.items) ? bill.items.length : 0)
+  ].join("|");
+}
+
 function retailBillFingerprintParts(bill) {
   return {
     date: String(bill?.date || ""),
-    billNumber: String(bill?.bill_number || "").trim(),
+    billNumber: normalizeRetailBillNumberValue(bill?.bill_number),
     customerName: normalizeRetailBillFingerprintValue(bill?.customer_name),
-    totalAmount: Number(bill?.total_amount || 0).toFixed(2),
-    mode: normalizeRetailBillMode(bill)
+    customerPhone: normalizeRetailBillFingerprintValue(bill?.customer_phone).replace(/\D/g, ""),
+    totalAmount: normalizeRetailBillNumericValue(bill?.total_amount || 0, 2),
+    paidAmount: normalizeRetailBillNumericValue(bill?.paid_amount || 0, 2),
+    outstandingAmount: normalizeRetailBillNumericValue(bill?.outstanding_amount || 0, 2),
+    totalNag: normalizeRetailBillNumericValue(bill?.total_quantity ?? bill?.total_nag ?? 0, 3),
+    totalWeight: normalizeRetailBillNumericValue(bill?.total_weight || 0, 3),
+    iceAmount: normalizeRetailBillNumericValue(bill?.ice_amount || 0, 2),
+    mode: normalizeRetailBillMode(bill),
+    itemSignature: retailBillItemsSignature(bill),
+    summarySignature: retailBillSummarySignature(bill)
   };
 }
 
 function retailBillsMatchByFingerprint(localBill, remoteBill) {
   const local = retailBillFingerprintParts(localBill);
   const remote = retailBillFingerprintParts(remoteBill);
-  return local.date === remote.date
-    && local.billNumber === remote.billNumber
-    && local.customerName === remote.customerName
-    && local.totalAmount === remote.totalAmount
-    && local.mode === remote.mode;
+
+  if (local.date !== remote.date || local.billNumber !== remote.billNumber) {
+    return false;
+  }
+
+  if (local.itemSignature && remote.itemSignature && local.itemSignature === remote.itemSignature) {
+    return local.summarySignature === remote.summarySignature
+      || (
+        local.totalAmount === remote.totalAmount
+        && local.paidAmount === remote.paidAmount
+        && local.outstandingAmount === remote.outstandingAmount
+        && local.mode === remote.mode
+      );
+  }
+
+  if (local.summarySignature === remote.summarySignature) {
+    return true;
+  }
+
+  const customerMatches = !!local.customerName && local.customerName === remote.customerName;
+  const phoneMatches = !!local.customerPhone && local.customerPhone === remote.customerPhone;
+  return (
+    local.totalAmount === remote.totalAmount
+    && local.paidAmount === remote.paidAmount
+    && local.outstandingAmount === remote.outstandingAmount
+    && local.totalNag === remote.totalNag
+    && local.totalWeight === remote.totalWeight
+    && local.iceAmount === remote.iceAmount
+    && local.mode === remote.mode
+    && (customerMatches || phoneMatches || (!local.customerName && !remote.customerName))
+  );
 }
 
 async function findMatchingRemoteRetailBill(pendingBill) {
   if (!pendingBill?.date || !pendingBill?.bill_number) return null;
   const response = await apiCall(`/retail-bills?date=${encodeURIComponent(pendingBill.date)}`, "GET", null, {}, { loader: false });
   const results = Array.isArray(response?.results) ? response.results : [];
-  return results.find(serverBill => retailBillsMatchByFingerprint(pendingBill, serverBill)) || null;
+  const candidates = results.filter(serverBill =>
+    String(serverBill?.date || "") === String(pendingBill.date || "")
+    && normalizeRetailBillNumberValue(serverBill?.bill_number) === normalizeRetailBillNumberValue(pendingBill?.bill_number)
+  );
+
+  if (!candidates.length) return null;
+
+  for (const candidate of candidates) {
+    const details = await apiCall(`/retail-bills/${candidate.id}`, "GET", null, {}, { loader: false });
+    if (!details?.error && retailBillsMatchByFingerprint(pendingBill, details)) {
+      return details;
+    }
+  }
+
+  return null;
 }
 
 function renderRetailOfflineBanner() {

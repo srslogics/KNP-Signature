@@ -1081,45 +1081,56 @@ function loadPage(page) {
                   </div>
                 </div>
 
-                <div id="retailRegularSection" class="retail-billing-section">
-                  <div class="retail-shortcuts">
-                    <div class="retail-shortcuts-head">
-                      <span>Regular Shortcuts</span>
-                      <p>Tap an item to add it with its default rate.</p>
-                    </div>
-                    <div id="retailRegularShortcutItems" class="retail-shortcut-list"></div>
-                  </div>
-
+                <div class="retail-shortcuts retail-combined-shortcuts">
                   <div class="retail-shortcuts-head">
-                    <span>Regular Billing</span>
-                    <p>Regular chicken billing with automatic rate fill from shortcuts.</p>
+                    <span>Shortcuts</span>
+                    <p>Keep regular and dressed shortcuts together so counter staff can add either kind of line from one place.</p>
                   </div>
-                  <div id="retailRegularRows" class="retail-items retail-items-horizontal"></div>
+                  <div class="retail-shortcut-groups">
+                    <div class="retail-shortcut-group">
+                      <div class="retail-shortcuts-head">
+                        <span>Regular Shortcuts</span>
+                        <p>Tap an item to add it with its default rate.</p>
+                      </div>
+                      <div id="retailRegularShortcutItems" class="retail-shortcut-list"></div>
+                    </div>
+                    <div class="retail-shortcut-group">
+                      <div class="retail-shortcuts-head">
+                        <span>Dressed Shortcuts</span>
+                        <p>Tap an item to add it with its default rate.</p>
+                      </div>
+                      <div id="retailDressedShortcutItems" class="retail-shortcut-list"></div>
+                    </div>
+                  </div>
                 </div>
 
-                <div id="retailDressedSection" class="retail-billing-section" >
-                  <div class="retail-shortcuts">
+                <div class="retail-combined-workspace">
+                  <div id="retailRegularSection" class="retail-billing-section retail-billing-card">
                     <div class="retail-shortcuts-head">
-                      <span>Dressed Shortcuts</span>
-                      <p>Tap an item to add it with its default rate.</p>
+                      <span>Regular Billing</span>
+                      <p>Regular chicken billing with automatic rate fill from shortcuts.</p>
                     </div>
-                    <div id="retailDressedShortcutItems" class="retail-shortcut-list"></div>
+                    <div id="retailRegularRows" class="retail-items retail-items-horizontal"></div>
+                    <div class="retail-inline-actions">
+                      <button type="button" id="retailAddRegularItemButton" onclick="addRegularRetailRow()">Add Regular Item</button>
+                    </div>
                   </div>
 
-                  <div class="retail-shortcuts-head">
-                    <span>Dressed Billing</span>
-                    <p>Bill dressed chicken separately with item name, kgs, rate, and amount.</p>
+                  <div id="retailDressedSection" class="retail-billing-section retail-billing-card">
+                    <div class="retail-shortcuts-head">
+                      <span>Dressed Billing</span>
+                      <p>Bill dressed chicken separately with item name, kgs, rate, and amount.</p>
+                    </div>
+                    <div id="retailDressedRows" class="retail-items retail-items-horizontal"></div>
+                    <div class="retail-inline-actions">
+                      <button type="button" id="retailAddDressedItemButton" onclick="addDressedRetailRow()">Add Dressed Item</button>
+                    </div>
                   </div>
-                  <div id="retailDressedRows" class="retail-items retail-items-horizontal"></div>
                 </div>
 
                 <div class="retail-form-grid retail-notes-grid">
                   <input type="number" id="retailPaidAmount" placeholder="Paid amount" min="0" step="0.01">
                   <textarea id="retailNotes" placeholder="Notes for bill"></textarea>
-                </div>
-                <div class="retail-item-actions">
-                  <button type="button" id="retailAddRegularItemButton" onclick="addRegularRetailRow()">Add Regular Item</button>
-                  <button type="button" id="retailAddDressedItemButton" onclick="addDressedRetailRow()">Add Dressed Item</button>
                 </div>
                 <div class="report-actions retail-actions">
                   <button type="button" onclick="saveRetailBill({ autoStartNext: true })">Save Bill</button>

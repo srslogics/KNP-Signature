@@ -1151,6 +1151,48 @@ input[type="file"] {
   margin-top: 22px;
 }
 
+.retail-combined-shortcuts {
+  display: grid;
+  gap: 16px;
+}
+
+.retail-shortcut-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.retail-shortcut-group {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.retail-combined-workspace {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.retail-billing-card {
+  margin-top: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.retail-inline-actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.retail-inline-actions button {
+  min-width: 180px;
+}
+
 .offline-banner-actions {
   margin-top: 10px;
 }
@@ -1513,6 +1555,10 @@ input[type="file"] {
   align-self: start;
 }
 
+.retail-combined-workspace .retail-items {
+  margin-top: 12px;
+}
+
 .thermal-preview {
   display: flex;
   justify-content: center;
@@ -1731,6 +1777,11 @@ input[type="file"] {
   .retail-preview-panel {
     position: static;
   }
+
+  .retail-shortcut-groups,
+  .retail-combined-workspace {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 920px) {
@@ -1781,7 +1832,9 @@ input[type="file"] {
   .retail-item-row,
   .retail-shortcut-form,
   .dressed-stock-row,
-  .retail-notes-grid {
+  .retail-notes-grid,
+  .retail-shortcut-groups,
+  .retail-combined-workspace {
     grid-template-columns: 1fr;
   }
 
