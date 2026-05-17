@@ -62,6 +62,21 @@ class UserSession(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
 
 
+class DocumentNumberCounter(Base):
+    __tablename__ = "document_number_counters"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"), nullable=False)
+    target_date = Column(Date, nullable=False)
+    next_number = Column(Integer, nullable=False, default=1)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("outlet_id", "target_date", name="unique_document_counter_per_day"),
+    )
+
+
 class PartyAlias(Base):
     __tablename__ = "party_aliases"
 

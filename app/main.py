@@ -23,6 +23,53 @@ from fastapi.responses import Response, JSONResponse
 app = FastAPI()
 
 
+def current_shared_document_number(target_date, db: Session, outlet_id) -> str:
+    bill_numbers = db.query(models.RetailBill.bill_number).filter(
+        models.RetailBill.date == target_date,
+        models.RetailBill.outlet_id == outlet_id
+    ).all()
+    receipt_numbers = db.query(models.PaymentReceipt.receipt_number).filter(
+        models.PaymentReceipt.date == target_date,
+        models.PaymentReceipt.outlet_id == outlet_id
+    ).all()
+
+    max_number = 0
+    for row in list(bill_numbers) + list(receipt_numbers):
+        raw_value = getattr(row, "bill_number", None) or getattr(row, "receipt_number", None)
+        digits = "".join(char for char in str(raw_value or "") if char.isdigit())
+        if digits:
+            max_number = max(max_number, int(digits))
+
+    counter_row = db.query(models.DocumentNumberCounter).filter(
+        models.DocumentNumberCounter.target_date == target_date,
+        models.DocumentNumberCounter.outlet_id == outlet_id
+    ).first()
+    if counter_row and counter_row.next_number:
+        max_number = max(max_number, int(counter_row.next_number) - 1)
+
+    return str(max_number + 1)
+
+
+def reserve_shared_document_number(target_date, db: Session, outlet_id) -> str:
+    reserved_number = db.execute(
+        text("""
+            INSERT INTO document_number_counters (id, outlet_id, target_date, next_number)
+            VALUES (:id, :outlet_id, :target_date, 2)
+            ON CONFLICT (outlet_id, target_date)
+            DO UPDATE SET
+                next_number = document_number_counters.next_number + 1,
+                updated_at = now()
+            RETURNING next_number - 1 AS reserved_number
+        """),
+        {
+            "id": str(uuid4()),
+            "outlet_id": str(outlet_id),
+            "target_date": target_date,
+        }
+    ).scalar_one()
+    return str(reserved_number)
+
+
 def ensure_database_schema():
     with engine.begin() as conn:
         # Serialize boot-time schema work so parallel app instances don't deadlock
@@ -76,8 +123,20 @@ def ensure_database_schema():
                 created_at TIMESTAMP DEFAULT now()
             )
         """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS document_number_counters (
+                id UUID PRIMARY KEY,
+                outlet_id UUID NOT NULL REFERENCES outlets(id),
+                target_date DATE NOT NULL,
+                next_number INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT now(),
+                updated_at TIMESTAMP DEFAULT now(),
+                CONSTRAINT unique_document_counter_per_day UNIQUE (outlet_id, target_date)
+            )
+        """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions (token)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions (user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_document_number_counters_outlet_date ON document_number_counters (outlet_id, target_date)"))
         conn.execute(text("ALTER TABLE transactions DROP CONSTRAINT IF EXISTS unique_txn"))
         conn.execute(text("""
             DO $$
@@ -4151,24 +4210,7 @@ def next_retail_bill_number(date: str, db: Session = Depends(get_db), current_ou
     target_date = parse_input_date(date)
     if not target_date:
         return {"error": "Invalid date format"}
-
-    bill_numbers = db.query(models.RetailBill.bill_number).filter(
-        models.RetailBill.date == target_date,
-        models.RetailBill.outlet_id == current_outlet.id
-    ).all()
-    receipt_numbers = db.query(models.PaymentReceipt.receipt_number).filter(
-        models.PaymentReceipt.date == target_date,
-        models.PaymentReceipt.outlet_id == current_outlet.id
-    ).all()
-
-    max_number = 0
-    for row in list(bill_numbers) + list(receipt_numbers):
-        raw_value = getattr(row, "bill_number", None) or getattr(row, "receipt_number", None)
-        digits = "".join(char for char in str(raw_value or "") if char.isdigit())
-        if digits:
-            max_number = max(max_number, int(digits))
-
-    return {"bill_number": str(max_number + 1)}
+    return {"bill_number": reserve_shared_document_number(target_date, db, current_outlet.id)}
 
 
 @app.get("/retail-bills")
@@ -4225,24 +4267,7 @@ def next_payment_receipt_number(date: str, db: Session = Depends(get_db), curren
     target_date = parse_input_date(date)
     if not target_date:
         return {"error": "Invalid date format"}
-
-    receipt_numbers = db.query(models.PaymentReceipt.receipt_number).filter(
-        models.PaymentReceipt.date == target_date,
-        models.PaymentReceipt.outlet_id == current_outlet.id
-    ).all()
-    bill_numbers = db.query(models.RetailBill.bill_number).filter(
-        models.RetailBill.date == target_date,
-        models.RetailBill.outlet_id == current_outlet.id
-    ).all()
-
-    max_number = 0
-    for row in list(receipt_numbers) + list(bill_numbers):
-        raw_value = getattr(row, "receipt_number", None) or getattr(row, "bill_number", None)
-        digits = "".join(char for char in str(raw_value or "") if char.isdigit())
-        if digits:
-            max_number = max(max_number, int(digits))
-
-    return {"receipt_number": str(max_number + 1)}
+    return {"receipt_number": reserve_shared_document_number(target_date, db, current_outlet.id)}
 
 
 @app.get("/payment-receipts")
@@ -4411,8 +4436,7 @@ def create_payment_receipt(payload: dict = Body(...), db: Session = Depends(get_
 
     receipt_number = str(payload.get("receipt_number") or "").strip()
     if not receipt_number:
-        next_number = next_payment_receipt_number(str(target_date), db, current_outlet)
-        receipt_number = next_number.get("receipt_number", "1")
+        receipt_number = reserve_shared_document_number(target_date, db, current_outlet.id)
 
     existing = db.query(models.PaymentReceipt).filter(
         models.PaymentReceipt.date == target_date,
@@ -4425,7 +4449,7 @@ def create_payment_receipt(payload: dict = Body(...), db: Session = Depends(get_
         models.RetailBill.bill_number == receipt_number
     ).first()
     if existing or existing_bill:
-        return {"error": "Receipt number already exists"}
+        receipt_number = reserve_shared_document_number(target_date, db, current_outlet.id)
 
     party_phone = str(payload.get("party_phone") or "").strip()
     party_address = str(payload.get("party_address") or "").strip()
@@ -4611,8 +4635,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db),
 
     bill_number = str(payload.get("bill_number") or "").strip()
     if not bill_number:
-        next_number = next_retail_bill_number(str(target_date), db, current_outlet)
-        bill_number = next_number.get("bill_number", "1")
+        bill_number = reserve_shared_document_number(target_date, db, current_outlet.id)
 
     existing = db.query(models.RetailBill).filter(
         models.RetailBill.date == target_date,
@@ -4625,7 +4648,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db),
         models.PaymentReceipt.receipt_number == bill_number
     ).first()
     if existing or existing_receipt:
-        return {"error": "Bill number already exists"}
+        bill_number = reserve_shared_document_number(target_date, db, current_outlet.id)
 
     customer_name = str(payload.get("customer_name") or "").strip()
     customer_phone = str(payload.get("customer_phone") or "").strip()
