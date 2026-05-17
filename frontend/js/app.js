@@ -491,16 +491,13 @@ function loadPage(page) {
         <div class="container upload-page">
 
           <div class="page-intro">
-            <span>Daily Operations</span>
-            <h2>Capture purchases, sales, payments, mortality, and opening figures in one working screen</h2>
+            <h2>Daily Entries</h2>
           </div>
 
-          <div class="section upload-date-section">
+          <div class="section upload-date-section section-full">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
-                <span>Working Date</span>
-                <h2>Choose one date before entering the day</h2>
-                <p>This date is shared by manual entries and the day-processing step.</p>
+                <h2>Working Date</h2>
               </div>
             </div>
             <div class="upload-box upload-date-box">
@@ -512,16 +509,11 @@ function loadPage(page) {
           <datalist id="itemSuggestions"></datalist>
           <datalist id="manualPartySuggestions"></datalist>
 
-          <div class="section">
+          <div class="section section-full">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
-                <span>Party Directory</span>
-                <h2>Save party details once and reuse them everywhere</h2>
-                <p>Keep customer, vendor, and dealer names clean so billing and ledger stay consistent.</p>
+                <h2>Party Directory</h2>
               </div>
-            </div>
-            <div class="upload-box directory-intro upload-note-box">
-              Save customer, vendor, or dealer name with phone number once. Billing and receipts can then fetch it automatically.
             </div>
             <div class="upload-box manual-entry-row party-directory-form">
               <select id="directoryPartySelect" onchange="selectDirectoryParty(this.value)">
@@ -541,21 +533,13 @@ function loadPage(page) {
               </select>
               <button type="button" class="directory-save-button" onclick="savePartyDirectoryEntry()">Save Party</button>
             </div>
-            <div class="upload-box directory-intro upload-note-box">
-              Pick a saved party from the dropdown to edit it, or leave the dropdown empty to add a new one.
-            </div>
           </div>
 
           <div class="section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
-                <span>Dealer Purchases</span>
-                <h2>Capture inward stock and transport loss together</h2>
-                <p>Use one row per dealer line so purchase and transport mortality stay tied to the same entry.</p>
+                <h2>Dealer Purchases</h2>
               </div>
-            </div>
-            <div class="upload-box directory-intro upload-note-box">
-              Add dealer purchase here. If any birds died in transport, add that directly in the same row under transport mortality.
             </div>
             <div id="dealerEntryRows" class="stock-rows"></div>
             <div class="upload-box upload-actions">
@@ -567,9 +551,7 @@ function loadPage(page) {
           <div class="section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
-                <span>Vendor Sales</span>
-                <h2>Enter vendor-side movement cleanly</h2>
-                <p>Keep category, item, NAG, kgs, and rate in one compact sales row.</p>
+                <h2>Vendor Sales</h2>
               </div>
             </div>
             <div id="vendorEntryRows" class="stock-rows"></div>
@@ -582,9 +564,7 @@ function loadPage(page) {
           <div class="section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
-                <span>Payments</span>
-                <h2>Log incoming and outgoing money separately from billing</h2>
-                <p>Use this for direct party payments that are not being entered from the counter billing screen.</p>
+                <h2>Payments</h2>
               </div>
             </div>
             <div id="paymentEntryRows" class="stock-rows"></div>
@@ -597,9 +577,7 @@ function loadPage(page) {
           <div class="section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
-                <span>Shop Mortality</span>
-                <h2>Record post-arrival mortality separately</h2>
-                <p>This is for shop-side loss only. Transport mortality belongs inside dealer purchase rows.</p>
+                <h2>Shop Mortality</h2>
               </div>
             </div>
             <div id="mortalityEntryRows" class="stock-rows"></div>
@@ -609,12 +587,10 @@ function loadPage(page) {
             </div>
           </div>
 
-          <div class="section">
+          <div class="section section-full">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
-                <span>Process Day</span>
-                <h2>Close the day with actual stock</h2>
-                <p>Enter actual closing NAG and weight per hen type, then process the day to calculate leakage.</p>
+                <h2>Process Day</h2>
               </div>
             </div>
             <div class="upload-box process-day-controls">
@@ -636,9 +612,7 @@ function loadPage(page) {
           <div class="section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
-                <span>Initial Setup</span>
                 <h2>Opening Balance</h2>
-                <p>Use this when carrying forward party receivable or payable at the start of the system.</p>
               </div>
             </div>
             <div id="openingBalanceEntryRows" class="stock-rows"></div>
@@ -651,9 +625,7 @@ function loadPage(page) {
           <div class="section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
-                <span>Initial Setup</span>
                 <h2>Opening Stock</h2>
-                <p>Set the beginning live stock so the first stock sheet starts from a real baseline.</p>
               </div>
             </div>
             <div id="openingStockEntryRows" class="stock-rows"></div>
@@ -698,14 +670,12 @@ function loadPage(page) {
         <div class="container">
 
           <div class="page-intro dashboard-intro">
-            <span>Control Center</span>
-            <h2>Daily revenue, stock control, collections, and counter activity in one working view</h2>
+            <h2>Business Dashboard</h2>
           </div>
 
           <div class="card toolbar dashboard-toolbar">
             <div class="dashboard-toolbar-copy">
-              <span>Working Date</span>
-              <h3>Load one day and review the business quickly</h3>
+              <h3>Working Date</h3>
             </div>
             <div class="dashboard-toolbar-actions">
               <input type="date" id="dashboardDate">
@@ -717,25 +687,21 @@ function loadPage(page) {
             <div class="dashboard-kpi-card tone-blue">
               <span>Today's Revenue</span>
               <h2 id="sales">₹ 0</h2>
-              <p>Total sales booked for the selected day</p>
             </div>
 
             <div class="dashboard-kpi-card tone-slate">
               <span>Today's Cost</span>
               <h2 id="purchase">₹ 0</h2>
-              <p>Stock purchase value recorded for the day</p>
             </div>
 
             <div class="dashboard-kpi-card tone-green">
               <span>Profit</span>
               <h2 id="profit">₹ 0</h2>
-              <p>Simple operating spread for the selected day</p>
             </div>
 
             <div class="dashboard-kpi-card tone-red">
               <span>Leakage</span>
               <h2 id="leakage">0 kg</h2>
-              <p>Difference between expected and actual stock</p>
             </div>
           </div>
 
@@ -743,19 +709,16 @@ function loadPage(page) {
             <div class="dashboard-kpi-card tone-green">
               <span>Receivable</span>
               <h2 id="receivable">₹ 0</h2>
-              <p>Money expected from parties up to this date</p>
             </div>
 
             <div class="dashboard-kpi-card tone-slate">
               <span>Payable</span>
               <h2 id="payable">₹ 0</h2>
-              <p>Money to be paid out up to this date</p>
             </div>
 
             <div class="dashboard-kpi-card tone-green">
               <span>Total Outstanding</span>
               <h2 id="outstanding">₹ 0</h2>
-              <p>Combined open balance across parties</p>
             </div>
           </div>
 
@@ -881,14 +844,12 @@ function loadPage(page) {
         <div class="container access-control-page">
 
           <div class="page-intro">
-            <span>Owner Only</span>
-            <h2>Create staff users and keep editing rights with owner only</h2>
+            <h2>Access Control</h2>
           </div>
 
           <div class="section">
             <div class="section-head">
               <div>
-                <span>Outlet Management</span>
                 <h2>Add Outlet</h2>
               </div>
             </div>
@@ -905,7 +866,6 @@ function loadPage(page) {
           <div class="section">
             <div class="section-head">
               <div>
-                <span>Current Outlets</span>
                 <h2>Saved Outlets</h2>
               </div>
             </div>
@@ -915,7 +875,6 @@ function loadPage(page) {
           <div class="section">
             <div class="section-head">
               <div>
-                <span>User Management</span>
                 <h2>Add App User</h2>
               </div>
             </div>
@@ -940,7 +899,6 @@ function loadPage(page) {
           <div class="section">
             <div class="section-head">
               <div>
-                <span>Current Access</span>
                 <h2>Saved Users</h2>
               </div>
             </div>
@@ -966,8 +924,7 @@ function loadPage(page) {
         <div class="container">
 
           <div class="page-intro">
-            <span>Party Ledger</span>
-            <h2>Search customer, hotel, shop, or dealer balances</h2>
+            <h2>Ledger</h2>
           </div>
 
           <div class="card search-card toolbar">
@@ -1027,15 +984,13 @@ function loadPage(page) {
         <div class="container">
 
           <div class="page-intro">
-            <span>Counter Billing</span>
-            <h2>Create retail bills, payment receipts, print thermal slips, and push records into the system</h2>
+            <h2>Retail Billing</h2>
           </div>
 
           <div class="retail-layout">
             <div class="section">
               <div class="section-head">
                 <div>
-                  <span>New Bill</span>
                   <h2 id="retailModeTitle">Retail Billing</h2>
                 </div>
                 <button type="button" onclick="resetRetailForm()">New Bill</button>
@@ -1051,9 +1006,8 @@ function loadPage(page) {
 
               <div id="retailSalesSection" class="retail-billing-panel retail-billing-section retail-combined-billing">
                 <div class="retail-shortcuts">
-                  <div class="retail-shortcuts-head">
+                <div class="retail-shortcuts-head">
                     <span>Bill Details</span>
-                    <p>Use one bill for regular items, dressed items, or both together.</p>
                   </div>
                   <div class="retail-form-grid">
                     <input type="date" id="retailDate" aria-label="Retail bill date">
@@ -1086,20 +1040,17 @@ function loadPage(page) {
                 <div class="retail-shortcuts retail-combined-shortcuts">
                   <div class="retail-shortcuts-head">
                     <span>Shortcuts</span>
-                    <p>Keep regular and dressed shortcuts together so counter staff can add either kind of line from one place.</p>
                   </div>
                   <div class="retail-shortcut-groups">
                     <div class="retail-shortcut-group">
                       <div class="retail-shortcuts-head">
                         <span>Regular Shortcuts</span>
-                        <p>Tap an item to add it with its default rate.</p>
                       </div>
                       <div id="retailRegularShortcutItems" class="retail-shortcut-list"></div>
                     </div>
                     <div class="retail-shortcut-group">
                       <div class="retail-shortcuts-head">
                         <span>Dressed Shortcuts</span>
-                        <p>Tap an item to add it with its default rate.</p>
                       </div>
                       <div id="retailDressedShortcutItems" class="retail-shortcut-list"></div>
                     </div>
@@ -1110,7 +1061,6 @@ function loadPage(page) {
                   <div id="retailRegularSection" class="retail-billing-section retail-billing-card">
                     <div class="retail-shortcuts-head">
                       <span>Regular Billing</span>
-                      <p>Regular chicken billing with automatic rate fill from shortcuts.</p>
                     </div>
                     <div id="retailRegularRows" class="retail-items retail-items-horizontal"></div>
                     <div class="retail-inline-actions">
@@ -1121,7 +1071,6 @@ function loadPage(page) {
                   <div id="retailDressedSection" class="retail-billing-section retail-billing-card">
                     <div class="retail-shortcuts-head">
                       <span>Dressed Billing</span>
-                      <p>Bill dressed chicken separately with item name, kgs, rate, and amount.</p>
                     </div>
                     <div id="retailDressedRows" class="retail-items retail-items-horizontal"></div>
                     <div class="retail-inline-actions">
@@ -1144,7 +1093,6 @@ function loadPage(page) {
               <div id="paymentReceiptSection" class="retail-billing-panel retail-billing-section" style="display:none;">
                 <div class="retail-shortcuts-head">
                   <span>Payment Receipt</span>
-                  <p>Create a separate receipt when money is received from or paid to a vendor or dealer.</p>
                 </div>
 
                 <div class="retail-form-grid">
@@ -1188,21 +1136,17 @@ function loadPage(page) {
 
             <div class="section retail-preview-panel">
               <div class="section-head">
-                <div>
-                  <span>Print Preview</span>
-                  <h2 id="retailPreviewTitle">Retail Bill Preview</h2>
-                </div>
+              <div>
+                <h2 id="retailPreviewTitle">Retail Bill Preview</h2>
+              </div>
               </div>
               <div id="retailPreview" class="thermal-preview"></div>
             </div>
           </div>
 
-          <div class="section" id="retailBillHistorySection">
-            <div class="section-head">
-              <div>
-                <span>Saved Bills</span>
-                <h2 id="retailHistoryTitle">Recent Retail Bills</h2>
-              </div>
+          <details class="section collapsible-section" id="retailBillHistorySection">
+            <summary class="section-summary">Recent Retail Bills</summary>
+            <div class="section-head compact-section-head">
               <button type="button" onclick="loadRetailBills()">Refresh</button>
             </div>
 
@@ -1225,14 +1169,11 @@ function loadPage(page) {
                 </tbody>
               </table>
             </div>
-          </div>
+          </details>
 
-          <div class="section" id="paymentReceiptHistorySection" >
-            <div class="section-head">
-              <div>
-                <span>Saved Payment Receipts</span>
-                <h2>Recent Payment Receipts</h2>
-              </div>
+          <details class="section collapsible-section" id="paymentReceiptHistorySection">
+            <summary class="section-summary">Recent Payment Receipts</summary>
+            <div class="section-head compact-section-head">
               <button type="button" onclick="loadPaymentReceipts()">Refresh</button>
             </div>
 
@@ -1254,7 +1195,7 @@ function loadPage(page) {
                 </tbody>
               </table>
             </div>
-          </div>
+          </details>
 
         </div>
       `;
@@ -1272,14 +1213,12 @@ function loadPage(page) {
         <div class="container">
 
           <div class="page-intro">
-            <span>Billing Admin</span>
-            <h2>Manage shortcut items and dressed stock without cluttering the live billing counter</h2>
+            <h2>Billing Setup</h2>
           </div>
 
           <div class="section retail-setup-page">
             <div class="section-head">
               <div>
-                <span>Setup Tools</span>
                 <h2 id="retailModeTitle">Regular Setup</h2>
               </div>
             </div>
@@ -1287,7 +1226,6 @@ function loadPage(page) {
             <div class="retail-shortcuts">
               <div class="retail-shortcuts-head">
                 <span>Working Date</span>
-                <p>Use one outlet and one billing date while preparing shortcuts or dressed stock.</p>
               </div>
               <div class="retail-form-grid retail-setup-date-grid">
                 <input type="date" id="retailDate" aria-label="Billing setup date">
@@ -1303,7 +1241,6 @@ function loadPage(page) {
               <div class="retail-shortcut-manager">
                 <div class="retail-shortcuts-head">
                   <span>Shortcut Manager</span>
-                  <p id="shortcutManagerHelp">Add your own quick items with default rate for this billing type.</p>
                 </div>
                 <div class="retail-shortcut-form">
                   <input type="text" id="shortcutName" placeholder="Item name">
@@ -1324,7 +1261,6 @@ function loadPage(page) {
               <div class="retail-shortcuts" id="dressedStockSetupSection" >
                 <div class="retail-shortcuts-head">
                   <span>Dressed Stock Entry</span>
-                  <p>Enter live stock and dressed weight. Bills deduct dressed weight automatically.</p>
                 </div>
                 <div id="dressedStockRows" class="retail-items"></div>
                 <div class="retail-item-actions">
@@ -1334,7 +1270,6 @@ function loadPage(page) {
                 <div class="retail-saved-subsection">
                   <div class="retail-shortcuts-head retail-saved-head">
                     <span>Saved Dressed Stock</span>
-                    <p>Review dressed stock entries saved for the selected billing date.</p>
                   </div>
                   <div class="card table-card">
                     <table>
@@ -1376,8 +1311,7 @@ function loadPage(page) {
         <div class="container">
 
           <div class="page-intro">
-            <span>Daily Trading Sheet</span>
-            <h2>Opening stock, purchases, sales by section, and final stock summary</h2>
+            <h2>Daily Sheet</h2>
           </div>
 
           <div class="card filter toolbar">
@@ -1393,7 +1327,6 @@ function loadPage(page) {
           <div class="section daily-sheet-card">
             <div class="section-head">
               <div>
-                <span>Daily Statement</span>
                 <h2 id="dailySheetTitle">Opening Stock</h2>
               </div>
               <button onclick="window.print()">Print</button>
@@ -1420,8 +1353,7 @@ function loadPage(page) {
         <div class="container">
 
           <div class="page-intro">
-            <span>Performance Review</span>
-            <h2>Track sales, leakage, debtors, and hen-type profitability</h2>
+            <h2>Analytics</h2>
           </div>
 
           <div class="card filter toolbar">
@@ -1510,14 +1442,12 @@ function loadPage(page) {
         <div class="container">
 
           <div class="page-intro">
-            <span>Exports</span>
-            <h2>Download financial records for review, audit, and client sharing</h2>
+            <h2>Reports</h2>
           </div>
 
           <div class="section">
             <div class="section-head">
               <div>
-                <span>Report Builder</span>
                 <h2>Download Financial Records</h2>
               </div>
             </div>
