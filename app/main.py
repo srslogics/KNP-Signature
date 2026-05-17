@@ -53,13 +53,40 @@ def current_shared_document_number(target_date, db: Session, outlet_id) -> str:
 def reserve_shared_document_number(target_date, db: Session, outlet_id) -> str:
     reserved_number = db.execute(
         text("""
-            INSERT INTO document_number_counters (id, outlet_id, target_date, next_number)
-            VALUES (:id, :outlet_id, :target_date, 2)
+            WITH current_max AS (
+                SELECT COALESCE(MAX(number_value), 0) AS max_number
+                FROM (
+                    SELECT CAST(regexp_replace(COALESCE(bill_number, ''), '[^0-9]', '', 'g') AS INTEGER) AS number_value
+                    FROM retail_bills
+                    WHERE date = :target_date
+                      AND outlet_id = :outlet_id
+                      AND COALESCE(regexp_replace(COALESCE(bill_number, ''), '[^0-9]', '', 'g'), '') <> ''
+                    UNION ALL
+                    SELECT CAST(regexp_replace(COALESCE(receipt_number, ''), '[^0-9]', '', 'g') AS INTEGER) AS number_value
+                    FROM payment_receipts
+                    WHERE date = :target_date
+                      AND outlet_id = :outlet_id
+                      AND COALESCE(regexp_replace(COALESCE(receipt_number, ''), '[^0-9]', '', 'g'), '') <> ''
+                ) existing_numbers
+            ),
+            reserved AS (
+                INSERT INTO document_number_counters (id, outlet_id, target_date, next_number)
+                VALUES (
+                    :id,
+                    :outlet_id,
+                    :target_date,
+                    (SELECT max_number + 2 FROM current_max)
+                )
             ON CONFLICT (outlet_id, target_date)
             DO UPDATE SET
-                next_number = document_number_counters.next_number + 1,
+                next_number = GREATEST(
+                    document_number_counters.next_number,
+                    (SELECT max_number + 1 FROM current_max)
+                ) + 1,
                 updated_at = now()
-            RETURNING next_number - 1 AS reserved_number
+                RETURNING next_number - 1 AS reserved_number
+            )
+            SELECT reserved_number FROM reserved
         """),
         {
             "id": str(uuid4()),
@@ -4210,7 +4237,7 @@ def next_retail_bill_number(date: str, db: Session = Depends(get_db), current_ou
     target_date = parse_input_date(date)
     if not target_date:
         return {"error": "Invalid date format"}
-    return {"bill_number": reserve_shared_document_number(target_date, db, current_outlet.id)}
+    return {"bill_number": current_shared_document_number(target_date, db, current_outlet.id)}
 
 
 @app.get("/retail-bills")
@@ -4267,7 +4294,7 @@ def next_payment_receipt_number(date: str, db: Session = Depends(get_db), curren
     target_date = parse_input_date(date)
     if not target_date:
         return {"error": "Invalid date format"}
-    return {"receipt_number": reserve_shared_document_number(target_date, db, current_outlet.id)}
+    return {"receipt_number": current_shared_document_number(target_date, db, current_outlet.id)}
 
 
 @app.get("/payment-receipts")
@@ -4434,22 +4461,7 @@ def create_payment_receipt(payload: dict = Body(...), db: Session = Depends(get_
     if not direction:
         return {"error": "Direction must be RECEIVED or PAID"}
 
-    receipt_number = str(payload.get("receipt_number") or "").strip()
-    if not receipt_number:
-        receipt_number = reserve_shared_document_number(target_date, db, current_outlet.id)
-
-    existing = db.query(models.PaymentReceipt).filter(
-        models.PaymentReceipt.date == target_date,
-        models.PaymentReceipt.outlet_id == current_outlet.id,
-        models.PaymentReceipt.receipt_number == receipt_number
-    ).first()
-    existing_bill = db.query(models.RetailBill).filter(
-        models.RetailBill.date == target_date,
-        models.RetailBill.outlet_id == current_outlet.id,
-        models.RetailBill.bill_number == receipt_number
-    ).first()
-    if existing or existing_bill:
-        receipt_number = reserve_shared_document_number(target_date, db, current_outlet.id)
+    receipt_number = reserve_shared_document_number(target_date, db, current_outlet.id)
 
     party_phone = str(payload.get("party_phone") or "").strip()
     party_address = str(payload.get("party_address") or "").strip()
@@ -4633,22 +4645,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db),
     if not raw_items:
         return {"error": "Add at least one retail item"}
 
-    bill_number = str(payload.get("bill_number") or "").strip()
-    if not bill_number:
-        bill_number = reserve_shared_document_number(target_date, db, current_outlet.id)
-
-    existing = db.query(models.RetailBill).filter(
-        models.RetailBill.date == target_date,
-        models.RetailBill.outlet_id == current_outlet.id,
-        models.RetailBill.bill_number == bill_number
-    ).first()
-    existing_receipt = db.query(models.PaymentReceipt).filter(
-        models.PaymentReceipt.date == target_date,
-        models.PaymentReceipt.outlet_id == current_outlet.id,
-        models.PaymentReceipt.receipt_number == bill_number
-    ).first()
-    if existing or existing_receipt:
-        bill_number = reserve_shared_document_number(target_date, db, current_outlet.id)
+    bill_number = reserve_shared_document_number(target_date, db, current_outlet.id)
 
     customer_name = str(payload.get("customer_name") or "").strip()
     customer_phone = str(payload.get("customer_phone") or "").strip()
