@@ -336,7 +336,7 @@ async function loadUserAccessList() {
   const box = document.getElementById("userAccessList");
   if (!box || !isOwner()) return;
   box.textContent = "Loading users...";
-  const data = await optionalApiCall("/auth/users", { results: [] }, "GET", null, { cache: false });
+  const data = await optionalApiCall("/auth/users", { results: [] }, "GET", null, { cache: true });
   const users = data.results || [];
   if (!users.length) {
     box.textContent = "No users yet";
@@ -353,7 +353,7 @@ async function loadOutletAdminData() {
   const select = document.getElementById("newUserOutlets");
   if (!isOwner()) return;
 
-  const data = await optionalApiCall("/outlets", { results: [] }, "GET", null, { cache: false });
+  const data = await optionalApiCall("/outlets", { results: [] }, "GET", null, { cache: true });
   const outlets = data.results || [];
 
   if (listBox) {
@@ -404,6 +404,7 @@ async function createOutlet() {
   localStorage.setItem("STOCKPILOT_AUTH_USER", JSON.stringify(currentUser));
   normalizeSelectedOutletId(currentPage || "dashboard");
   updateAuthUi();
+  if (typeof clearCachedResponse === "function") clearCachedResponse("/outlets");
   await loadOutletAdminData();
   showToast("Outlet created");
 }
@@ -440,6 +441,7 @@ async function createAppUser() {
   });
   syncUserOutletPicker();
   showToast("User created");
+  if (typeof clearCachedResponse === "function") clearCachedResponse("/auth/users");
   loadUserAccessList();
 }
 

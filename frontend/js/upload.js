@@ -207,14 +207,43 @@ function initPartyDirectory() {
   if (!nameInput) return;
 
   nameInput.addEventListener("input", () => {
-    const partyId = document.getElementById("directoryPartyId");
-    if (partyId) partyId.value = "";
+    resetDirectoryLinkedFieldsIfNameChanged();
   });
   nameInput.addEventListener("input", suggestDirectoryParties);
   nameInput.addEventListener("focus", suggestDirectoryParties);
   nameInput.addEventListener("change", () => hydrateDirectoryPartyForm(nameInput.value));
   nameInput.addEventListener("blur", () => hydrateDirectoryPartyForm(nameInput.value));
   nameInput.addEventListener("blur", () => scheduleUploadPartySuggestionHide(document.getElementById("directoryPartySuggestBox")));
+}
+
+function rememberDirectoryLinkedParty(party) {
+  const nameInput = document.getElementById("directoryPartyName");
+  if (!nameInput) return;
+  nameInput.dataset.linkedPartyName = normalizeUploadPartyLookup(party?.name || "");
+}
+
+function clearDirectoryLinkedParty() {
+  const nameInput = document.getElementById("directoryPartyName");
+  if (nameInput) delete nameInput.dataset.linkedPartyName;
+}
+
+function resetDirectoryLinkedFieldsIfNameChanged() {
+  const nameInput = document.getElementById("directoryPartyName");
+  if (!nameInput) return;
+
+  const linkedName = nameInput.dataset.linkedPartyName || "";
+  const currentName = normalizeUploadPartyLookup(nameInput.value);
+  if (!linkedName || linkedName === currentName) return;
+
+  const partyId = document.getElementById("directoryPartyId");
+  const phone = document.getElementById("directoryPartyPhone");
+  const address = document.getElementById("directoryPartyAddress");
+  const type = document.getElementById("directoryPartyType");
+  if (partyId) partyId.value = "";
+  if (phone) phone.value = "";
+  if (address) address.value = "";
+  if (type) type.value = "BOTH";
+  clearDirectoryLinkedParty();
 }
 
 function createManualRow(containerId, html, rowClass = "") {
@@ -639,6 +668,7 @@ async function hydrateDirectoryPartyForm(name) {
     if (phoneInput) phoneInput.value = party.phone || "";
     if (addressInput) addressInput.value = party.address || "";
     if (typeInput) typeInput.value = party.type || "BOTH";
+    rememberDirectoryLinkedParty(party);
   } catch (e) {
     console.error(e);
   }
@@ -691,6 +721,11 @@ async function savePartyDirectoryEntry() {
     showToast("Party saved");
     setUploadStatus("success", `Party saved. ${data.rows_inserted || 0} added, ${data.rows_updated || 0} updated.`);
     resetDirectoryPartyForm();
+    if (typeof clearCachedResponse === "function") {
+      clearCachedResponse("/party-directory");
+      clearCachedResponsesByPrefix?.("/party/profile?name=");
+      clearCachedResponsesByPrefix?.("/party/search?name=");
+    }
     await loadPartyDirectory();
   } catch (e) {
     console.error(e);
@@ -710,7 +745,7 @@ async function loadPartyDirectory() {
   }
 
   try {
-    const data = await optionalApiCall("/party-directory", { results: [] }, "GET", null, { cache: false });
+    const data = await optionalApiCall("/party-directory", { results: [] }, "GET", null, { cache: true });
     const results = data.results || [];
     if (select) {
       select.innerHTML = `<option value="">Select saved party</option>`;
@@ -747,6 +782,7 @@ function resetDirectoryPartyForm(resetSelect = true) {
   if (phone) phone.value = "";
   if (address) address.value = "";
   if (type) type.value = "BOTH";
+  clearDirectoryLinkedParty();
 }
 
 function setUploadStatus(type, message, errors = []) {

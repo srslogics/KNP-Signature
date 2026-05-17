@@ -30,6 +30,19 @@ function clearApiCache() {
   responseCache.clear();
 }
 
+function clearCachedResponse(url, method = "GET") {
+  responseCache.delete(`${method}:${url}`);
+}
+
+function clearCachedResponsesByPrefix(prefix, method = "GET") {
+  const keyPrefix = `${method}:${prefix}`;
+  Array.from(responseCache.keys()).forEach(key => {
+    if (key.startsWith(keyPrefix)) {
+      responseCache.delete(key);
+    }
+  });
+}
+
 async function apiCall(url, method = "GET", body = null, headers = {}, apiOptions = {}) {
     const shouldShowLoader = apiOptions.loader === true || method !== "GET";
     const useCache = apiOptions.cache === true && method === "GET";

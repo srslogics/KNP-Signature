@@ -283,6 +283,7 @@ function initRetailPage() {
 
   const customerNameInput = retailField("regular", "customerName");
   if (customerNameInput) {
+    customerNameInput.addEventListener("input", () => resetLinkedRetailPartyFieldsIfNameChanged("regular"));
     customerNameInput.addEventListener("change", () => hydrateRetailCustomerProfile(customerNameInput.value));
     customerNameInput.addEventListener("blur", () => hydrateRetailCustomerProfile(customerNameInput.value));
     customerNameInput.addEventListener("blur", () => scheduleSuggestionBoxHide("retailCustomerSuggestBox"));
@@ -322,6 +323,7 @@ function initRetailPage() {
 
   const paymentReceiptPartyName = document.getElementById("paymentReceiptPartyName");
   if (paymentReceiptPartyName) {
+    paymentReceiptPartyName.addEventListener("input", resetLinkedPaymentReceiptFieldsIfNameChanged);
     paymentReceiptPartyName.addEventListener("change", () => hydratePaymentReceiptPartyProfile(paymentReceiptPartyName.value));
     paymentReceiptPartyName.addEventListener("blur", () => hydratePaymentReceiptPartyProfile(paymentReceiptPartyName.value));
     paymentReceiptPartyName.addEventListener("blur", () => scheduleSuggestionBoxHide("paymentReceiptPartySuggestBox"));
@@ -335,12 +337,12 @@ function initRetailPage() {
   renderRetailOfflineBanner();
   syncRetailSettlementUi();
   setRetailBillingMode("regular");
-  ensureRetailPartyDirectoryLoaded();
   refreshRetailBillNumber();
-  ensureDressedStockLoaded();
   scheduleRetailPreviewRender();
   loadRetailBills();
-  syncPendingRetailBills(true);
+  setTimeout(() => ensureRetailPartyDirectoryLoaded(), 120);
+  setTimeout(() => ensureDressedStockLoaded(), 180);
+  setTimeout(() => syncPendingRetailBills(true), 320);
   retailPageBootstrapped = true;
 }
 
@@ -640,14 +642,67 @@ function getRetailPartyBalance(mode) {
   return Number(retailPartyBalanceByMode[mode] || 0);
 }
 
+function storeLinkedPartyState(nameInput, phoneInput, addressInput, party) {
+  if (!nameInput) return;
+  nameInput.dataset.linkedPartyName = normalizeRetailPartyLookup(party?.name || "");
+  nameInput.dataset.linkedPartyPhone = party?.phone || "";
+  nameInput.dataset.linkedPartyAddress = party?.address || "";
+  if (phoneInput) phoneInput.dataset.linkedFromParty = "true";
+  if (addressInput) addressInput.dataset.linkedFromParty = "true";
+}
+
+function clearLinkedPartyState(nameInput, phoneInput, addressInput) {
+  if (nameInput) {
+    delete nameInput.dataset.linkedPartyName;
+    delete nameInput.dataset.linkedPartyPhone;
+    delete nameInput.dataset.linkedPartyAddress;
+  }
+  if (phoneInput) delete phoneInput.dataset.linkedFromParty;
+  if (addressInput) delete addressInput.dataset.linkedFromParty;
+}
+
+function resetLinkedRetailPartyFieldsIfNameChanged(mode = retailBillingMode) {
+  const input = retailField(mode, "customerName");
+  const phoneInput = retailField(mode, "customerPhone");
+  const addressInput = retailField(mode, "customerAddress");
+  if (!input) return;
+
+  const linkedName = input.dataset.linkedPartyName || "";
+  const currentName = normalizeRetailPartyLookup(input.value);
+  if (!linkedName || linkedName === currentName) return;
+
+  if (phoneInput) phoneInput.value = "";
+  if (addressInput) addressInput.value = "";
+  clearLinkedPartyState(input, phoneInput, addressInput);
+  setRetailPartyBalance(mode, 0);
+  scheduleRetailPreviewRender();
+}
+
+function resetLinkedPaymentReceiptFieldsIfNameChanged() {
+  const input = document.getElementById("paymentReceiptPartyName");
+  const phoneInput = document.getElementById("paymentReceiptPartyPhone");
+  const addressInput = document.getElementById("paymentReceiptPartyAddress");
+  if (!input) return;
+
+  const linkedName = input.dataset.linkedPartyName || "";
+  const currentName = normalizeRetailPartyLookup(input.value);
+  if (!linkedName || linkedName === currentName) return;
+
+  if (phoneInput) phoneInput.value = "";
+  if (addressInput) addressInput.value = "";
+  clearLinkedPartyState(input, phoneInput, addressInput);
+  schedulePaymentReceiptPreviewRender();
+}
+
 function applyRetailPartyToFields(party, mode = retailBillingMode) {
   if (!party) return;
   const input = retailField(mode, "customerName");
   const phoneInput = retailField(mode, "customerPhone");
   const addressInput = retailField(mode, "customerAddress");
   if (input) input.value = party.name || input.value;
-  if (phoneInput && !phoneInput.value.trim()) phoneInput.value = party.phone || "";
-  if (addressInput && !addressInput.value.trim()) addressInput.value = party.address || "";
+  if (phoneInput) phoneInput.value = party.phone || "";
+  if (addressInput) addressInput.value = party.address || "";
+  storeLinkedPartyState(input, phoneInput, addressInput, party);
   setRetailPartyBalance(mode, party.balance_after ?? party.party_balance ?? 0);
   scheduleRetailPreviewRender();
 }
@@ -658,8 +713,9 @@ function applyPaymentReceiptPartyToFields(party) {
   const phoneInput = document.getElementById("paymentReceiptPartyPhone");
   const addressInput = document.getElementById("paymentReceiptPartyAddress");
   if (input) input.value = party.name || input.value;
-  if (phoneInput && !phoneInput.value.trim()) phoneInput.value = party.phone || "";
-  if (addressInput && !addressInput.value.trim()) addressInput.value = party.address || "";
+  if (phoneInput) phoneInput.value = party.phone || "";
+  if (addressInput) addressInput.value = party.address || "";
+  storeLinkedPartyState(input, phoneInput, addressInput, party);
   schedulePaymentReceiptPreviewRender();
 }
 
@@ -1363,9 +1419,13 @@ async function saveRetailBill(options = {}) {
     retailBillCompleted = true;
     renderRetailPreview(currentRetailBill);
     showToast(`Retail bill ${currentRetailBill.bill_number} ${isEditing ? "updated" : "saved"}`);
-    await loadRetailBills();
+    if (typeof clearCachedResponsesByPrefix === "function") {
+      clearCachedResponsesByPrefix("/retail-bills");
+      clearCachedResponsesByPrefix("/party/profile?name=");
+    }
+    await loadRetailBills(true);
     if (retailBillingMode === "dressed") {
-      await loadDressedStock();
+      await loadDressedStock(true);
     }
     if (autoStartNext) {
       startNextRetailBill();
@@ -1380,7 +1440,10 @@ async function saveRetailBill(options = {}) {
       retailBillCompleted = true;
       renderRetailPreview(currentRetailBill);
       renderRetailOfflineBanner();
-      await loadRetailBills();
+      if (typeof clearCachedResponsesByPrefix === "function") {
+        clearCachedResponsesByPrefix("/retail-bills");
+      }
+      await loadRetailBills(true);
       showToast(`Saved offline. Bill ${offlineBill.bill_number} will sync later.`);
       return offlineBill;
     }
@@ -1446,7 +1509,11 @@ async function savePaymentReceipt(options = {}) {
     paymentReceiptCompleted = true;
     renderPaymentReceiptPreview(currentPaymentReceipt);
     showToast(`Payment receipt ${currentPaymentReceipt.receipt_number} ${isEditing ? "updated" : "saved"}`);
-    await loadPaymentReceipts();
+    if (typeof clearCachedResponsesByPrefix === "function") {
+      clearCachedResponsesByPrefix("/payment-receipts");
+      clearCachedResponsesByPrefix("/party/profile?name=");
+    }
+    await loadPaymentReceipts(true);
     if (autoStartNext) {
       startNextPaymentReceipt();
     }
@@ -1458,7 +1525,7 @@ async function savePaymentReceipt(options = {}) {
   }
 }
 
-async function loadPaymentReceipts() {
+async function loadPaymentReceipts(force = false) {
   const date = document.getElementById("paymentReceiptDate")?.value;
   const body = document.getElementById("paymentReceiptBody");
   if (!body) return;
@@ -1474,7 +1541,7 @@ async function loadPaymentReceipts() {
       { results: [] },
       "GET",
       null,
-      { cache: false }
+      { cache: !force }
     );
 
     if (!(data.results || []).length) {
@@ -1516,7 +1583,7 @@ async function openPaymentReceipt(receiptId) {
   }
 }
 
-async function loadRetailBills() {
+async function loadRetailBills(force = false) {
   const date = getActiveRetailDate();
   const body = document.getElementById("retailBillsBody");
   if (!body) return;
@@ -1534,7 +1601,7 @@ async function loadRetailBills() {
           { results: [] },
           "GET",
           null,
-          { cache: false }
+          { cache: !force }
         )
       : { results: [] };
 
@@ -1622,19 +1689,22 @@ async function saveDressedStock() {
     const container = document.getElementById("dressedStockRows");
     if (container) container.innerHTML = "";
     addDressedStockRow();
-    await loadDressedStock();
+    if (typeof clearCachedResponsesByPrefix === "function") {
+      clearCachedResponsesByPrefix("/dressed-stock");
+    }
+    await loadDressedStock(true);
   } catch (e) {
     console.error(e);
     showToast("Dressed stock save failed");
   }
 }
 
-async function loadDressedStock() {
+async function loadDressedStock(force = false) {
   const date = document.getElementById("retailDate")?.value;
   if (!date) return;
 
   try {
-    const data = await optionalApiCall(`/dressed-stock?date=${encodeURIComponent(date)}`, { entries: [], available_items: [] }, "GET", null, { cache: false });
+    const data = await optionalApiCall(`/dressed-stock?date=${encodeURIComponent(date)}`, { entries: [], available_items: [] }, "GET", null, { cache: !force });
     dressedStockCache = data.available_items || [];
     dressedStockLoadedForDate = date;
     renderSavedDressedStock(data.entries || []);
@@ -1994,9 +2064,13 @@ async function sendCurrentPaymentReceipt() {
 }
 
 function resetPaymentReceiptForm() {
-  document.getElementById("paymentReceiptPartyName").value = "";
-  document.getElementById("paymentReceiptPartyPhone").value = "";
-  document.getElementById("paymentReceiptPartyAddress").value = "";
+  const paymentName = document.getElementById("paymentReceiptPartyName");
+  const paymentPhone = document.getElementById("paymentReceiptPartyPhone");
+  const paymentAddress = document.getElementById("paymentReceiptPartyAddress");
+  paymentName.value = "";
+  paymentPhone.value = "";
+  paymentAddress.value = "";
+  clearLinkedPartyState(paymentName, paymentPhone, paymentAddress);
   document.getElementById("paymentReceiptAmount").value = "";
   document.getElementById("paymentReceiptNotes").value = "";
   document.getElementById("paymentReceiptDirection").value = "RECEIVED";
@@ -2024,9 +2098,13 @@ function resetRetailForm() {
   if (regularRows) regularRows.innerHTML = "";
   if (dressedRows) dressedRows.innerHTML = "";
 
-  retailField("regular", "customerName").value = "";
-  retailField("regular", "customerPhone").value = "";
-  retailField("regular", "customerAddress").value = "";
+  const customerName = retailField("regular", "customerName");
+  const customerPhone = retailField("regular", "customerPhone");
+  const customerAddress = retailField("regular", "customerAddress");
+  customerName.value = "";
+  customerPhone.value = "";
+  customerAddress.value = "";
+  clearLinkedPartyState(customerName, customerPhone, customerAddress);
   setRetailPartyBalance("regular", 0);
   setRetailPartyBalance("dressed", 0);
   retailField("regular", "iceAmount").value = "";
@@ -2195,8 +2273,10 @@ async function hydrateRetailCustomerProfile(name, mode = retailBillingMode) {
     if (cachedParty) {
       const phoneInput = retailField(mode, "customerPhone");
       const addressInput = retailField(mode, "customerAddress");
-      if (phoneInput && !phoneInput.value.trim()) phoneInput.value = cachedParty.phone || "";
-      if (addressInput && !addressInput.value.trim()) addressInput.value = cachedParty.address || "";
+      if (phoneInput) phoneInput.value = cachedParty.phone || "";
+      if (addressInput) addressInput.value = cachedParty.address || "";
+      storeLinkedPartyState(retailField(mode, "customerName"), phoneInput, addressInput, cachedParty);
+      setRetailPartyBalance(mode, cachedParty.balance_after ?? cachedParty.party_balance ?? 0);
       scheduleRetailPreviewRender();
       return;
     }
@@ -2212,8 +2292,9 @@ async function hydrateRetailCustomerProfile(name, mode = retailBillingMode) {
 
     const phoneInput = retailField(mode, "customerPhone");
     const addressInput = retailField(mode, "customerAddress");
-    if (phoneInput && !phoneInput.value.trim()) phoneInput.value = party.phone || "";
-    if (addressInput && !addressInput.value.trim()) addressInput.value = party.address || "";
+    if (phoneInput) phoneInput.value = party.phone || "";
+    if (addressInput) addressInput.value = party.address || "";
+    storeLinkedPartyState(retailField(mode, "customerName"), phoneInput, addressInput, party);
     setRetailPartyBalance(mode, party.balance_after ?? 0);
     scheduleRetailPreviewRender();
   } catch (e) {
@@ -2231,8 +2312,9 @@ async function hydratePaymentReceiptPartyProfile(name) {
     if (cachedParty) {
       const phoneInput = document.getElementById("paymentReceiptPartyPhone");
       const addressInput = document.getElementById("paymentReceiptPartyAddress");
-      if (phoneInput && !phoneInput.value.trim()) phoneInput.value = cachedParty.phone || "";
-      if (addressInput && !addressInput.value.trim()) addressInput.value = cachedParty.address || "";
+      if (phoneInput) phoneInput.value = cachedParty.phone || "";
+      if (addressInput) addressInput.value = cachedParty.address || "";
+      storeLinkedPartyState(document.getElementById("paymentReceiptPartyName"), phoneInput, addressInput, cachedParty);
       schedulePaymentReceiptPreviewRender();
       return;
     }
@@ -2243,8 +2325,9 @@ async function hydratePaymentReceiptPartyProfile(name) {
 
     const phoneInput = document.getElementById("paymentReceiptPartyPhone");
     const addressInput = document.getElementById("paymentReceiptPartyAddress");
-    if (phoneInput && !phoneInput.value.trim()) phoneInput.value = party.phone || "";
-    if (addressInput && !addressInput.value.trim()) addressInput.value = party.address || "";
+    if (phoneInput) phoneInput.value = party.phone || "";
+    if (addressInput) addressInput.value = party.address || "";
+    storeLinkedPartyState(document.getElementById("paymentReceiptPartyName"), phoneInput, addressInput, party);
     schedulePaymentReceiptPreviewRender();
   } catch (e) {
     console.error(e);
@@ -2891,6 +2974,9 @@ async function syncPendingRetailBills(silent = false) {
         currentRetailBill = response.bill;
         populateRetailFormFromBill(response.bill);
       }
+      if (typeof clearCachedResponsesByPrefix === "function") {
+        clearCachedResponsesByPrefix("/retail-bills");
+      }
       syncedCount += 1;
     } catch (e) {
       remaining.push({ ...bill, last_error: String(e?.message || e || "Sync failed") });
@@ -2899,9 +2985,9 @@ async function syncPendingRetailBills(silent = false) {
 
   setPendingRetailBills(remaining);
   renderRetailOfflineBanner();
-  await loadRetailBills();
+  await loadRetailBills(true);
   await refreshRetailBillNumber();
-  await loadDressedStock();
+  await loadDressedStock(true);
 
   if (!silent && syncedCount > 0) {
     showToast(`${syncedCount} offline retail bill${syncedCount === 1 ? "" : "s"} synced`);
