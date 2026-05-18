@@ -290,41 +290,58 @@ def print_raw(raw_bytes: bytes, printer_name: str | None = None):
 
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+
+    def log_message(self, format: str, *args):
+        return
+
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def _json(self, status: int, payload: dict):
+        body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self._cors()
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(json.dumps(payload).encode("utf-8"))
+        self.wfile.write(body)
+        self.wfile.flush()
 
     def do_OPTIONS(self):
-        self.send_response(204)
-        self._cors()
-        self.end_headers()
+        try:
+            self.send_response(204)
+            self._cors()
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
+            self.end_headers()
+        except Exception:
+            return
 
     def do_GET(self):
-        if self.path == "/health":
-            return self._json(200, {"status": "ok"})
-        if self.path == "/printers":
-            try:
+        try:
+            if self.path == "/health":
+                return self._json(200, {"status": "ok"})
+            if self.path == "/printers":
                 import win32print  # type: ignore
                 flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
                 printers = [entry[2] for entry in win32print.EnumPrinters(flags)]
                 default_printer = win32print.GetDefaultPrinter()
                 return self._json(200, {"default_printer": default_printer, "printers": printers})
-            except Exception as exc:
+            return self._json(404, {"error": "Not found"})
+        except Exception as exc:
+            try:
                 return self._json(500, {"error": str(exc)})
-        return self._json(404, {"error": "Not found"})
+            except Exception:
+                return
 
     def do_POST(self):
-        content_length = int(self.headers.get("Content-Length", "0") or 0)
-        raw_body = self.rfile.read(content_length) if content_length else b"{}"
         try:
+            content_length = int(self.headers.get("Content-Length", "0") or 0)
+            raw_body = self.rfile.read(content_length) if content_length else b"{}"
             payload = json.loads(raw_body.decode("utf-8"))
         except Exception:
             return self._json(400, {"error": "Invalid JSON"})
@@ -341,7 +358,10 @@ class Handler(BaseHTTPRequestHandler):
             used_printer = print_raw(raw_bytes, printer_name)
             return self._json(200, {"status": "printed", "printer": used_printer})
         except Exception as exc:
-            return self._json(500, {"error": str(exc)})
+            try:
+                return self._json(500, {"error": str(exc)})
+            except Exception:
+                return
 
 
 if __name__ == "__main__":
