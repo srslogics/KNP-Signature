@@ -5,14 +5,6 @@ const RETAIL_SHOP_PROFILE = {
   phone: "9371291195 / 7972329562"
 };
 
-const RETAIL_SHORTCUT_ITEMS = [
-  { name: "CB", rate: 0, line_type: "STANDARD", unit: "KGS" },
-  { name: "BB", rate: 0, line_type: "STANDARD", unit: "KGS" },
-  { name: "COCREL", rate: 0, line_type: "STANDARD", unit: "KGS" },
-  { name: "DESI", rate: 0, line_type: "STANDARD", unit: "KGS" },
-  { name: "LEGOAN", rate: 0, line_type: "STANDARD", unit: "KGS" },
-  { name: "LOOS", rate: 0, line_type: "STANDARD", unit: "KGS" }
-];
 const RETAIL_PENDING_STORAGE_KEY = "stockpilot.retail.pending";
 const RETAIL_SHORTCUT_STORAGE_KEY = "stockpilot.retail.shortcuts";
 const LOCAL_PRINT_BRIDGE_URL = localStorage.getItem("stockpilot.printBridgeUrl") || "http://127.0.0.1:9876";
@@ -832,15 +824,59 @@ function getRetailShortcuts() {
   } catch (e) {
     console.error("Failed to load shortcuts", e);
   }
-  return RETAIL_SHORTCUT_ITEMS;
+  return [];
 }
 
 function setRetailShortcuts(shortcuts) {
   localStorage.setItem(RETAIL_SHORTCUT_STORAGE_KEY, JSON.stringify(shortcuts));
 }
 
+function cancelRetailShortcutEdit() {
+  const editingInput = document.getElementById("editingShortcutOriginalName");
+  const nameInput = document.getElementById("shortcutName");
+  const rateInput = document.getElementById("shortcutRate");
+  const unitInput = document.getElementById("shortcutUnit");
+  const lineTypeInput = document.getElementById("shortcutLineType");
+  const saveButton = document.getElementById("saveShortcutButton");
+  const cancelButton = document.getElementById("cancelShortcutEditButton");
+
+  if (editingInput) editingInput.value = "";
+  if (nameInput) nameInput.value = "";
+  if (rateInput) rateInput.value = "";
+  if (lineTypeInput) lineTypeInput.value = retailBillingMode === "dressed" ? "DRESSED" : "STANDARD";
+  if (unitInput) {
+    unitInput.value = "KGS";
+    unitInput.style.display = retailBillingMode === "dressed" ? "none" : "";
+  }
+  if (saveButton) saveButton.innerText = "Save Shortcut";
+  if (cancelButton) cancelButton.style.display = "none";
+}
+
+function startRetailShortcutEdit(shortcut) {
+  const editingInput = document.getElementById("editingShortcutOriginalName");
+  const nameInput = document.getElementById("shortcutName");
+  const rateInput = document.getElementById("shortcutRate");
+  const unitInput = document.getElementById("shortcutUnit");
+  const lineTypeInput = document.getElementById("shortcutLineType");
+  const saveButton = document.getElementById("saveShortcutButton");
+  const cancelButton = document.getElementById("cancelShortcutEditButton");
+
+  if (editingInput) editingInput.value = shortcut.name || "";
+  if (nameInput) nameInput.value = shortcut.name || "";
+  if (rateInput) rateInput.value = Number(shortcut.rate || 0) > 0 ? Number(shortcut.rate).toFixed(2) : "";
+  if (lineTypeInput) lineTypeInput.value = (shortcut.line_type || "STANDARD").toUpperCase();
+  if (unitInput) {
+    unitInput.value = shortcut.unit || "KGS";
+    unitInput.style.display = (shortcut.line_type || "STANDARD").toUpperCase() === "DRESSED" ? "none" : "";
+  }
+  if (saveButton) saveButton.innerText = "Update Shortcut";
+  if (cancelButton) cancelButton.style.display = "";
+  nameInput?.focus();
+}
+
 function saveRetailShortcut() {
   const name = document.getElementById("shortcutName")?.value.trim();
+  const editingOriginalName = document.getElementById("editingShortcutOriginalName")?.value.trim();
   const lineType = retailBillingMode === "dressed"
     ? "DRESSED"
     : (document.getElementById("shortcutLineType")?.value || "STANDARD");
@@ -852,16 +888,18 @@ function saveRetailShortcut() {
     return;
   }
 
-  const shortcuts = getRetailShortcuts().filter(item => item.name.toLowerCase() !== name.toLowerCase());
+  const shortcuts = getRetailShortcuts().filter(item => {
+    const itemName = String(item.name || "").toLowerCase();
+    if (editingOriginalName && itemName === editingOriginalName.toLowerCase()) return false;
+    return itemName !== name.toLowerCase();
+  });
   shortcuts.push({ name, rate, line_type: lineType, unit });
   shortcuts.sort((a, b) => a.name.localeCompare(b.name));
   setRetailShortcuts(shortcuts);
   renderRetailShortcuts();
   renderShortcutManagerList();
-  document.getElementById("shortcutName").value = "";
-  const shortcutRateInput = document.getElementById("shortcutRate");
-  if (shortcutRateInput) shortcutRateInput.value = "";
-  showToast("Shortcut saved");
+  cancelRetailShortcutEdit();
+  showToast(editingOriginalName ? "Shortcut updated" : "Shortcut saved");
 }
 
 function removeRetailShortcut(name) {
@@ -884,12 +922,20 @@ function renderShortcutManagerList() {
     text.innerText = activeLineType === "DRESSED"
       ? `${shortcut.name} | DRESSED | Rs ${Number(shortcut.rate || 0).toFixed(2)}`
       : `${shortcut.name} | ${shortcut.line_type || "STANDARD"} | ${shortcut.unit || "KGS"} | Rs ${Number(shortcut.rate || 0).toFixed(2)}`;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.innerText = "Remove";
-    button.onclick = () => removeRetailShortcut(shortcut.name);
+    const actions = document.createElement("div");
+    actions.className = "retail-shortcut-managed-actions";
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.innerText = "Edit";
+    editButton.onclick = () => startRetailShortcutEdit(shortcut);
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.innerText = "Remove";
+    removeButton.onclick = () => removeRetailShortcut(shortcut.name);
+    actions.appendChild(editButton);
+    actions.appendChild(removeButton);
     chip.appendChild(text);
-    chip.appendChild(button);
+    chip.appendChild(actions);
     container.appendChild(chip);
   });
   if (!visibleShortcuts.length) {

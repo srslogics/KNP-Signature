@@ -1216,6 +1216,7 @@ function loadPage(page) {
                   <span>Shortcut Manager</span>
                 </div>
                 <div class="retail-shortcut-form">
+                  <input type="hidden" id="editingShortcutOriginalName">
                   <input type="text" id="shortcutName" placeholder="Item name">
                   <input type="number" id="shortcutRate" placeholder="Default rate" min="0" step="0.01">
                   <select id="shortcutLineType" >
@@ -1226,7 +1227,8 @@ function loadPage(page) {
                     <option value="KGS">KGS</option>
                     <option value="PCS">PCS</option>
                   </select>
-                  <button type="button" onclick="saveRetailShortcut()">Save Shortcut</button>
+                  <button type="button" id="saveShortcutButton" onclick="saveRetailShortcut()">Save Shortcut</button>
+                  <button type="button" id="cancelShortcutEditButton" onclick="cancelRetailShortcutEdit()" style="display:none;">Cancel</button>
                 </div>
                 <div id="retailShortcutManagerList" class="retail-shortcut-list retail-shortcut-list-managed"></div>
               </div>
