@@ -1461,7 +1461,7 @@ input[type="file"] {
 
 .retail-shortcut-form {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
   align-items: stretch;
 }
@@ -1528,10 +1528,11 @@ input[type="file"] {
   width: 100%;
   border-radius: 12px;
   flex-wrap: wrap;
+  overflow: hidden;
 }
 
 .retail-shortcut-chip-managed span {
-  flex: 1 1 240px;
+  flex: 1 1 180px;
   min-width: 0;
   line-height: 1.4;
   word-break: break-word;
@@ -1540,14 +1541,38 @@ input[type="file"] {
 .retail-shortcut-managed-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 8px;
-  flex: 0 0 auto;
+  flex: 1 1 100%;
+  min-width: 0;
 }
 
 .retail-shortcut-chip-managed button {
   min-height: 30px;
   padding: 6px 10px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 96px;
+  max-width: 100%;
+}
+
+.retail-shortcut-form button {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 1280px) {
+  .retail-shortcut-form {
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  }
+
+  .retail-shortcut-managed-actions {
+    gap: 6px;
+  }
+
+  .retail-shortcut-chip-managed button {
+    min-width: 88px;
+  }
 }
 
 .retail-items {
