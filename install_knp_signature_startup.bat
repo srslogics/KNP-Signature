@@ -20,7 +20,7 @@ if not exist "%TARGET_BAT%" (
 )
 
 > "%STARTUP_VBS%" echo Set shell = CreateObject("WScript.Shell")
->> "%STARTUP_VBS%" echo shell.Run Chr(34^) ^& "%TARGET_BAT%" ^& Chr(34^), 0, False
+>> "%STARTUP_VBS%" echo shell.Run Chr(34^) ^& "%TARGET_BAT%" ^& Chr(34^) ^& " bridge-only", 0, False
 
 echo.
 echo KNP Signature auto-start has been installed.

@@ -3911,7 +3911,7 @@ def get_dashboard(date: str, db: Session = Depends(get_db), scope=Depends(get_ou
 
         "receivable": float(receivable),
         "payable": float(payable),
-        "total_outstanding": float(receivable + payable),
+        "total_outstanding": float(receivable - payable),
         "retail_sales": float(retail_sales or 0),
         "dressed_sales_amount": float(dressed_sales_amount or 0),
         "payments_received": float(payments_received or 0),
