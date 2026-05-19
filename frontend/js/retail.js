@@ -990,7 +990,7 @@ function addRetailItemRow(item = null, defaultLineType = "STANDARD") {
   row.dataset.lineType = lineType;
   row.innerHTML = `
     <input type="text" class="retailItemName" placeholder="Item name" list="retailItemSuggestions" autocomplete="off" oninput="suggestRetailItems(this); recalcRetailLine(this)">
-    <input type="number" class="retailQty" placeholder="NAG" min="0" step="0.01" oninput="recalcRetailLine(this)">
+    <input type="number" class="retailQty" placeholder="NAG" min="0" step="1" oninput="recalcRetailLine(this)">
     <select class="retailUnit" onchange="recalcRetailLine(this)">
       <option value="KGS">KGS</option>
       <option value="PCS">PCS</option>

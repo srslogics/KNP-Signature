@@ -1213,11 +1213,19 @@ def stock_item_names_query(db: Session, scope=None):
         opening_query = apply_outlet_scope(opening_query, models.ItemOpeningStock, scope)
     opening_items = opening_query.distinct().all()
 
+    processed_query = db.query(models.DailyItemStock.item_type)
+    if scope:
+        processed_query = apply_outlet_scope(processed_query, models.DailyItemStock, scope)
+    processed_items = processed_query.distinct().all()
+
     items = set()
     for row in sale_purchase_items:
         if row.item_type:
             items.add(row.item_type)
     for row in opening_items:
+        if row.item_type:
+            items.add(row.item_type)
+    for row in processed_items:
         if row.item_type:
             items.add(row.item_type)
     return items
