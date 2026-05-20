@@ -390,6 +390,9 @@ async function submitManualEntries(endpoint, rows, label) {
     const skipped = data.rows_skipped ? `, ${data.rows_skipped} skipped` : "";
     showToast(`${label}: ${data.rows_inserted} rows${skipped}`);
     setUploadStatus(data.errors?.length ? "warning" : "success", `${label}: ${data.rows_inserted} rows${skipped}`, data.errors || []);
+    if (typeof clearOperationalCaches === "function") {
+      clearOperationalCaches();
+    }
   } catch (e) {
     console.error(e);
     showToast(`${label} failed`);

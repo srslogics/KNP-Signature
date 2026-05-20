@@ -183,6 +183,17 @@ function getCachedResponse(url, method = "GET") {
   return cached.data;
 }
 
+function clearOperationalCaches() {
+  clearCachedResponsesByPrefix("/dashboard?date=");
+  clearCachedResponsesByPrefix("/inventory/by-item?date=");
+  clearCachedResponsesByPrefix("/analytics/trend?");
+  clearCachedResponsesByPrefix("/analytics/summary?");
+  clearCachedResponsesByPrefix("/analytics/leakage?");
+  clearCachedResponsesByPrefix("/analytics/item-volume?");
+  clearCachedResponsesByPrefix("/analytics/payment-modes?");
+  clearCachedResponsesByPrefix("/daily-sheet?");
+}
+
 function requestMessage(method, url) {
   if (method === "POST") return "Processing...";
   if (url.includes("analytics")) return "Loading analytics...";

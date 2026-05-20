@@ -1469,6 +1469,9 @@ async function saveRetailBill(options = {}) {
       clearCachedResponsesByPrefix("/retail-bills");
       clearCachedResponsesByPrefix("/party/profile?name=");
     }
+    if (typeof clearOperationalCaches === "function") {
+      clearOperationalCaches();
+    }
     await loadRetailBills(true);
     if (retailBillingMode === "dressed") {
       await loadDressedStock(true);
@@ -1488,6 +1491,9 @@ async function saveRetailBill(options = {}) {
       renderRetailOfflineBanner();
       if (typeof clearCachedResponsesByPrefix === "function") {
         clearCachedResponsesByPrefix("/retail-bills");
+      }
+      if (typeof clearOperationalCaches === "function") {
+        clearOperationalCaches();
       }
       await loadRetailBills(true);
       showToast(`Saved offline. Bill ${offlineBill.bill_number} will sync later.`);
@@ -1558,6 +1564,9 @@ async function savePaymentReceipt(options = {}) {
     if (typeof clearCachedResponsesByPrefix === "function") {
       clearCachedResponsesByPrefix("/payment-receipts");
       clearCachedResponsesByPrefix("/party/profile?name=");
+    }
+    if (typeof clearOperationalCaches === "function") {
+      clearOperationalCaches();
     }
     await loadPaymentReceipts(true);
     if (autoStartNext) {
@@ -1737,6 +1746,9 @@ async function saveDressedStock() {
     addDressedStockRow();
     if (typeof clearCachedResponsesByPrefix === "function") {
       clearCachedResponsesByPrefix("/dressed-stock");
+    }
+    if (typeof clearOperationalCaches === "function") {
+      clearOperationalCaches();
     }
     await loadDressedStock(true);
   } catch (e) {
