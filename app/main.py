@@ -161,9 +161,24 @@ def ensure_database_schema():
                 CONSTRAINT unique_document_counter_per_day UNIQUE (outlet_id, target_date)
             )
         """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS retail_shortcuts (
+                id UUID PRIMARY KEY,
+                outlet_id UUID NOT NULL REFERENCES outlets(id),
+                name VARCHAR NOT NULL,
+                normalized_name VARCHAR NOT NULL,
+                line_type VARCHAR NOT NULL DEFAULT 'STANDARD',
+                unit VARCHAR NOT NULL DEFAULT 'KGS',
+                rate NUMERIC,
+                created_at TIMESTAMP DEFAULT now(),
+                updated_at TIMESTAMP DEFAULT now(),
+                CONSTRAINT unique_retail_shortcut_per_outlet UNIQUE (outlet_id, normalized_name, line_type)
+            )
+        """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions (token)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions (user_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_document_number_counters_outlet_date ON document_number_counters (outlet_id, target_date)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_retail_shortcuts_outlet_line_type ON retail_shortcuts (outlet_id, line_type)"))
         conn.execute(text("ALTER TABLE transactions DROP CONSTRAINT IF EXISTS unique_txn"))
         conn.execute(text("""
             DO $$
@@ -726,6 +741,131 @@ def list_outlets(db: Session = Depends(get_db), user: models.User = Depends(get_
         "results": [serialize_outlet(outlet) for outlet in outlets],
         "can_view_all": (user.role or ROLE_STAFF).upper() == ROLE_OWNER
     }
+
+
+@app.get("/retail-shortcuts")
+def list_retail_shortcuts(
+    db: Session = Depends(get_db),
+    current_outlet: models.Outlet = Depends(get_current_outlet)
+):
+    rows = db.query(models.RetailShortcut).filter(
+        models.RetailShortcut.outlet_id == current_outlet.id
+    ).order_by(
+        models.RetailShortcut.line_type.asc(),
+        models.RetailShortcut.name.asc()
+    ).all()
+
+    return {
+        "results": [
+            {
+                "id": str(row.id),
+                "name": row.name or "",
+                "rate": float(row.rate or 0),
+                "line_type": row.line_type or "STANDARD",
+                "unit": row.unit or "KGS"
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.post("/retail-shortcuts")
+def save_retail_shortcut(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_outlet: models.Outlet = Depends(get_current_outlet)
+):
+    shortcut_id_raw = str(payload.get("id") or "").strip()
+    name = str(payload.get("name") or "").strip()
+    line_type = str(payload.get("line_type") or "STANDARD").strip().upper() or "STANDARD"
+    unit = "KGS" if line_type == "DRESSED" else (str(payload.get("unit") or "KGS").strip().upper() or "KGS")
+    rate = Decimal(str(payload.get("rate") or 0))
+
+    if not name:
+        return {"error": "Enter shortcut item name"}
+
+    if line_type not in ["STANDARD", "DRESSED"]:
+        return {"error": "Invalid shortcut type"}
+
+    normalized_name = normalize_party_name(name)
+    shortcut = None
+    if shortcut_id_raw:
+        try:
+            shortcut = db.query(models.RetailShortcut).filter(
+                models.RetailShortcut.id == UUID(shortcut_id_raw),
+                models.RetailShortcut.outlet_id == current_outlet.id
+            ).first()
+        except ValueError:
+            shortcut = None
+
+    duplicate_query = db.query(models.RetailShortcut).filter(
+        models.RetailShortcut.outlet_id == current_outlet.id,
+        models.RetailShortcut.normalized_name == normalized_name,
+        models.RetailShortcut.line_type == line_type
+    )
+    if shortcut:
+        duplicate_query = duplicate_query.filter(models.RetailShortcut.id != shortcut.id)
+
+    if duplicate_query.first():
+        return {"error": "Shortcut already exists"}
+
+    if shortcut is None:
+        shortcut = models.RetailShortcut(
+            outlet_id=current_outlet.id,
+            name=name,
+            normalized_name=normalized_name,
+            line_type=line_type,
+            unit=unit,
+            rate=rate
+        )
+        db.add(shortcut)
+    else:
+        shortcut.name = name
+        shortcut.normalized_name = normalized_name
+        shortcut.line_type = line_type
+        shortcut.unit = unit
+        shortcut.rate = rate
+
+    try:
+        db.commit()
+        db.refresh(shortcut)
+    except Exception as e:
+        db.rollback()
+        return {"error": "Saving shortcut failed", "details": str(e)}
+
+    return {
+        "status": "success",
+        "shortcut": {
+            "id": str(shortcut.id),
+            "name": shortcut.name or "",
+            "rate": float(shortcut.rate or 0),
+            "line_type": shortcut.line_type or "STANDARD",
+            "unit": shortcut.unit or "KGS"
+        }
+    }
+
+
+@app.delete("/retail-shortcuts/{shortcut_id}")
+def delete_retail_shortcut(
+    shortcut_id: UUID,
+    db: Session = Depends(get_db),
+    current_outlet: models.Outlet = Depends(get_current_outlet)
+):
+    shortcut = db.query(models.RetailShortcut).filter(
+        models.RetailShortcut.id == shortcut_id,
+        models.RetailShortcut.outlet_id == current_outlet.id
+    ).first()
+    if not shortcut:
+        return {"error": "Shortcut not found"}
+
+    try:
+        db.delete(shortcut)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        return {"error": "Deleting shortcut failed", "details": str(e)}
+
+    return {"status": "success"}
 
 
 @app.post("/outlets")
@@ -5169,7 +5309,7 @@ def daily_sheet(
             relevant_filter = (
                 (models.Transaction.type == "PURCHASE") |
                 ((models.Transaction.type == "OPENING") & (models.Transaction.category == "PAYABLE")) |
-                ((models.Transaction.type == "PAYMENT") & (models.Transaction.category == "PAID"))
+                (models.Transaction.type == "PAYMENT")
             )
             old_case = case(
                 (
@@ -5181,7 +5321,7 @@ def daily_sheet(
                     models.Transaction.amount
                 ),
                 (
-                    (models.Transaction.date < target_date) & (models.Transaction.type == "PAYMENT") & (models.Transaction.category == "PAID"),
+                    (models.Transaction.date < target_date) & (models.Transaction.type == "PAYMENT"),
                     -models.Transaction.amount
                 ),
                 else_=0
@@ -5195,7 +5335,7 @@ def daily_sheet(
             )
             payment_case = case(
                 (
-                    (models.Transaction.date == target_date) & (models.Transaction.type == "PAYMENT") & (models.Transaction.category == "PAID"),
+                    (models.Transaction.date == target_date) & (models.Transaction.type == "PAYMENT"),
                     models.Transaction.amount
                 ),
                 else_=0

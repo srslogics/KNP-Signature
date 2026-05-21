@@ -6,7 +6,6 @@ const RETAIL_SHOP_PROFILE = {
 };
 
 const RETAIL_PENDING_STORAGE_KEY = "stockpilot.retail.pending";
-const RETAIL_SHORTCUT_STORAGE_KEY = "stockpilot.retail.shortcuts";
 const LOCAL_PRINT_BRIDGE_URL = localStorage.getItem("stockpilot.printBridgeUrl") || "http://127.0.0.1:9876";
 
 let retailItemSuggestTimer = null;
@@ -29,6 +28,10 @@ let dressedStockLoadedForDate = "";
 let retailPartyDirectoryCache = [];
 let retailPartyDirectoryLoaded = false;
 let retailPartyDirectoryPromise = null;
+let retailShortcutsCache = [];
+let retailShortcutsLoaded = false;
+let retailShortcutsPromise = null;
+let retailShortcutsOutletId = "";
 const retailPartyBalanceByMode = {
   regular: 0,
   dressed: 0
@@ -244,7 +247,7 @@ function retailField(mode, field) {
   return id ? document.getElementById(id) : null;
 }
 
-function initRetailPage() {
+async function initRetailPage() {
   retailPageBootstrapped = false;
   paymentReceiptHistoryLoaded = false;
   dressedStockLoadedForDate = "";
@@ -324,6 +327,7 @@ function initRetailPage() {
   attachRetailConnectivityListeners();
   addRegularRetailRow();
   addDressedRetailRow();
+  await ensureRetailShortcutsLoaded();
   renderRetailShortcuts();
   renderShortcutManagerList();
   renderRetailOfflineBanner();
@@ -351,6 +355,7 @@ async function initRetailSetupPage() {
     }
   });
 
+  await ensureRetailShortcutsLoaded();
   renderShortcutManagerList();
   setRetailBillingMode("regular");
   ensureRetailPartyDirectoryLoaded();
@@ -816,19 +821,47 @@ function renderRetailShortcuts() {
 }
 
 function getRetailShortcuts() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(RETAIL_SHORTCUT_STORAGE_KEY) || "null");
-    if (Array.isArray(saved) && saved.length) {
-      return saved;
-    }
-  } catch (e) {
-    console.error("Failed to load shortcuts", e);
-  }
-  return [];
+  return Array.isArray(retailShortcutsCache) ? retailShortcutsCache : [];
 }
 
-function setRetailShortcuts(shortcuts) {
-  localStorage.setItem(RETAIL_SHORTCUT_STORAGE_KEY, JSON.stringify(shortcuts));
+async function ensureRetailShortcutsLoaded(force = false) {
+  const activeOutletId = getSelectedOutletId();
+  if (retailShortcutsOutletId !== activeOutletId) {
+    retailShortcutsCache = [];
+    retailShortcutsLoaded = false;
+    retailShortcutsPromise = null;
+    retailShortcutsOutletId = activeOutletId;
+  }
+  if (retailShortcutsLoaded && !force) return retailShortcutsCache;
+  if (retailShortcutsPromise && !force) return retailShortcutsPromise;
+
+  retailShortcutsPromise = optionalApiCall(
+    "/retail-shortcuts",
+    { results: [] },
+    "GET",
+    null,
+    { cache: !force }
+  ).then(data => {
+    retailShortcutsCache = Array.isArray(data?.results) ? data.results : [];
+    retailShortcutsLoaded = true;
+    retailShortcutsPromise = null;
+    retailShortcutsOutletId = activeOutletId;
+    return retailShortcutsCache;
+  }).catch(err => {
+    console.error("Failed to load shortcuts", err);
+    retailShortcutsPromise = null;
+    retailShortcutsCache = [];
+    return retailShortcutsCache;
+  });
+
+  return retailShortcutsPromise;
+}
+
+function resetRetailShortcutCache() {
+  retailShortcutsLoaded = false;
+  retailShortcutsPromise = null;
+  retailShortcutsCache = [];
+  clearCachedResponse("/retail-shortcuts");
 }
 
 function cancelRetailShortcutEdit() {
@@ -861,7 +894,7 @@ function startRetailShortcutEdit(shortcut) {
   const saveButton = document.getElementById("saveShortcutButton");
   const cancelButton = document.getElementById("cancelShortcutEditButton");
 
-  if (editingInput) editingInput.value = shortcut.name || "";
+  if (editingInput) editingInput.value = shortcut.id || "";
   if (nameInput) nameInput.value = shortcut.name || "";
   if (rateInput) rateInput.value = Number(shortcut.rate || 0) > 0 ? Number(shortcut.rate).toFixed(2) : "";
   if (lineTypeInput) lineTypeInput.value = (shortcut.line_type || "STANDARD").toUpperCase();
@@ -874,9 +907,9 @@ function startRetailShortcutEdit(shortcut) {
   nameInput?.focus();
 }
 
-function saveRetailShortcut() {
+async function saveRetailShortcut() {
   const name = document.getElementById("shortcutName")?.value.trim();
-  const editingOriginalName = document.getElementById("editingShortcutOriginalName")?.value.trim();
+  const editingShortcutId = document.getElementById("editingShortcutOriginalName")?.value.trim();
   const lineType = retailBillingMode === "dressed"
     ? "DRESSED"
     : (document.getElementById("shortcutLineType")?.value || "STANDARD");
@@ -888,23 +921,41 @@ function saveRetailShortcut() {
     return;
   }
 
-  const shortcuts = getRetailShortcuts().filter(item => {
-    const itemName = String(item.name || "").toLowerCase();
-    if (editingOriginalName && itemName === editingOriginalName.toLowerCase()) return false;
-    return itemName !== name.toLowerCase();
-  });
-  shortcuts.push({ name, rate, line_type: lineType, unit });
-  shortcuts.sort((a, b) => a.name.localeCompare(b.name));
-  setRetailShortcuts(shortcuts);
+  const response = await apiCall(
+    "/retail-shortcuts",
+    "POST",
+    JSON.stringify({
+      id: editingShortcutId || "",
+      name,
+      rate,
+      line_type: lineType,
+      unit
+    }),
+    { "Content-Type": "application/json" }
+  );
+
+  if (response?.error) {
+    showToast(response.error);
+    return;
+  }
+
+  resetRetailShortcutCache();
+  await ensureRetailShortcutsLoaded(true);
   renderRetailShortcuts();
   renderShortcutManagerList();
   cancelRetailShortcutEdit();
-  showToast(editingOriginalName ? "Shortcut updated" : "Shortcut saved");
+  showToast(editingShortcutId ? "Shortcut updated" : "Shortcut saved");
 }
 
-function removeRetailShortcut(name) {
-  const shortcuts = getRetailShortcuts().filter(item => item.name !== name);
-  setRetailShortcuts(shortcuts);
+async function removeRetailShortcut(shortcutId) {
+  const response = await apiCall(`/retail-shortcuts/${shortcutId}`, "DELETE");
+  if (response?.error) {
+    showToast(response.error);
+    return;
+  }
+
+  resetRetailShortcutCache();
+  await ensureRetailShortcutsLoaded(true);
   renderRetailShortcuts();
   renderShortcutManagerList();
 }
@@ -931,7 +982,7 @@ function renderShortcutManagerList() {
     const removeButton = document.createElement("button");
     removeButton.type = "button";
     removeButton.innerText = "Remove";
-    removeButton.onclick = () => removeRetailShortcut(shortcut.name);
+    removeButton.onclick = () => removeRetailShortcut(shortcut.id);
     actions.appendChild(editButton);
     actions.appendChild(removeButton);
     chip.appendChild(text);

@@ -86,6 +86,24 @@ class PartyAlias(Base):
     party_id = Column(UUID(as_uuid=True), ForeignKey("parties.id"))
 
 
+class RetailShortcut(Base):
+    __tablename__ = "retail_shortcuts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"), nullable=False)
+    name = Column(String, nullable=False)
+    normalized_name = Column(String, nullable=False)
+    line_type = Column(String, nullable=False, default="STANDARD")
+    unit = Column(String, nullable=False, default="KGS")
+    rate = Column(Numeric)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("outlet_id", "normalized_name", "line_type", name="unique_retail_shortcut_per_outlet"),
+    )
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 
