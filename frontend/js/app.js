@@ -3,6 +3,7 @@ let currentUser = null;
 let authBootstrapped = false;
 let authNeedsSetup = false;
 const ALL_OUTLETS_TOKEN = "ALL";
+let deferredInstallPrompt = null;
 
 function getStoredAuthUser() {
   try {
@@ -136,6 +137,7 @@ function handleOutletChange(value) {
 function updateAuthUi() {
   const authMeta = document.getElementById("authMeta");
   const authButton = document.getElementById("authButton");
+  const installButton = document.getElementById("installAppButton");
   const dailySheetMenu = document.getElementById("menu-daily-sheet");
   const accessControlMenu = document.getElementById("menu-access-control");
 
@@ -149,6 +151,10 @@ function updateAuthUi() {
     authButton.textContent = currentUser ? "Logout" : "Login";
   }
 
+  if (installButton) {
+    installButton.style.display = deferredInstallPrompt ? "" : "none";
+  }
+
   if (dailySheetMenu) {
     dailySheetMenu.style.display = isOwner() ? "" : "none";
   }
@@ -159,6 +165,34 @@ function updateAuthUi() {
 
   renderOutletSwitcher();
 }
+
+async function promptInstallApp() {
+  if (!deferredInstallPrompt) {
+    showToast("Open browser menu and choose Install app");
+    return;
+  }
+
+  deferredInstallPrompt.prompt();
+  const choice = await deferredInstallPrompt.userChoice.catch(() => null);
+  deferredInstallPrompt = null;
+  updateAuthUi();
+
+  if (choice?.outcome === "accepted") {
+    showToast("App install started");
+  }
+}
+
+window.addEventListener("beforeinstallprompt", event => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  updateAuthUi();
+});
+
+window.addEventListener("appinstalled", () => {
+  deferredInstallPrompt = null;
+  updateAuthUi();
+  showToast("App installed");
+});
 
 function renderLoginScreen(setupMode = false) {
   const content = document.getElementById("content");

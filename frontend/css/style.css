@@ -352,6 +352,12 @@ input[type="file"] {
   border-radius: 999px;
 }
 
+#installAppButton {
+  min-width: 104px;
+  padding: 10px 16px;
+  border-radius: 999px;
+}
+
 .card,
 .section {
   margin-bottom: 14px;
