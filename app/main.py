@@ -102,7 +102,17 @@ def ensure_database_schema():
         # Serialize boot-time schema work so parallel app instances don't deadlock
         # while creating tables and adding columns on the same relations.
         conn.execute(text("SELECT pg_advisory_xact_lock(4815162342)"))
-        Base.metadata.create_all(bind=conn)
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS parties (
+                id UUID PRIMARY KEY,
+                name VARCHAR NOT NULL,
+                normalized_name VARCHAR,
+                type VARCHAR,
+                phone VARCHAR,
+                address VARCHAR,
+                created_at TIMESTAMP DEFAULT now()
+            )
+        """))
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS outlets (
                 id UUID PRIMARY KEY,
@@ -110,6 +120,55 @@ def ensure_database_schema():
                 code VARCHAR UNIQUE,
                 is_active VARCHAR NOT NULL DEFAULT 'true',
                 created_at TIMESTAMP DEFAULT now()
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS party_aliases (
+                id UUID PRIMARY KEY,
+                alias VARCHAR,
+                normalized_alias VARCHAR,
+                party_id UUID REFERENCES parties(id)
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id UUID PRIMARY KEY,
+                date DATE NOT NULL,
+                outlet_id UUID REFERENCES outlets(id),
+                party_id UUID REFERENCES parties(id),
+                type VARCHAR,
+                category VARCHAR,
+                item_type VARCHAR,
+                quantity NUMERIC,
+                weight NUMERIC,
+                rate NUMERIC,
+                amount NUMERIC,
+                payment_mode VARCHAR,
+                bill_number VARCHAR,
+                source_ref VARCHAR NOT NULL DEFAULT '',
+                created_at TIMESTAMP DEFAULT now()
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS uploaded_files (
+                id UUID PRIMARY KEY,
+                file_hash VARCHAR UNIQUE,
+                outlet_id UUID REFERENCES outlets(id),
+                file_type VARCHAR,
+                created_at TIMESTAMP DEFAULT now()
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS daily_stock (
+                id UUID PRIMARY KEY,
+                date DATE NOT NULL,
+                outlet_id UUID REFERENCES outlets(id),
+                opening_weight NUMERIC,
+                purchase_weight NUMERIC,
+                sales_weight NUMERIC,
+                expected_closing_weight NUMERIC,
+                actual_closing_weight NUMERIC,
+                leakage NUMERIC
             )
         """))
         conn.execute(text("ALTER TABLE parties ADD COLUMN IF NOT EXISTS phone VARCHAR"))
