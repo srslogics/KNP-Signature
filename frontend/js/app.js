@@ -152,7 +152,8 @@ function updateAuthUi() {
   }
 
   if (installButton) {
-    installButton.style.display = deferredInstallPrompt ? "" : "none";
+    installButton.style.display = "";
+    installButton.textContent = deferredInstallPrompt ? "Install App" : "Add to Home";
   }
 
   if (dailySheetMenu) {
@@ -168,7 +169,12 @@ function updateAuthUi() {
 
 async function promptInstallApp() {
   if (!deferredInstallPrompt) {
-    showToast("Open browser menu and choose Install app");
+    const isAndroid = /Android/i.test(navigator.userAgent || "");
+    if (isAndroid) {
+      showToast("Open browser menu and tap Add to Home screen");
+    } else {
+      showToast("Open browser menu and choose Install app");
+    }
     return;
   }
 
