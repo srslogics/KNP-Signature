@@ -1143,16 +1143,16 @@ input[type="file"] {
 .retail-form-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 #retailSalesSection > .retail-shortcuts:first-child {
-  padding: 8px 10px;
+  padding: 6px 8px;
 }
 
 #retailSalesSection > .retail-shortcuts:first-child .retail-form-grid {
   grid-template-columns: 0.9fr 0.78fr 0.82fr 1fr 0.88fr;
-  gap: 6px;
+  gap: 5px;
 }
 
 #retailPaidAmount:disabled {
@@ -1191,7 +1191,7 @@ input[type="file"] {
 .billing-priority-label {
   display: inline-block;
   color: var(--brand-dark);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1200,12 +1200,12 @@ input[type="file"] {
 }
 
 #retailSettlementType {
-  min-height: 36px;
+  min-height: 34px;
   border: 1.5px solid rgb(183 121 31 / 0.32);
   border-radius: 12px;
   background: linear-gradient(180deg, #fff9f0 0%, #ffffff 100%);
   color: #1b2836;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   box-shadow: 0 0 0 3px rgb(183 121 31 / 0.08);
 }
@@ -1216,18 +1216,18 @@ input[type="file"] {
 }
 
 .retail-notes-grid {
-  margin-top: 6px;
-  grid-template-columns: minmax(150px, 0.48fr) minmax(0, 1.52fr);
+  margin-top: 4px;
+  grid-template-columns: minmax(138px, 0.42fr) minmax(0, 1.58fr);
 }
 
 .retail-notes-grid textarea {
-  min-height: 54px;
+  min-height: 46px;
   resize: vertical;
 }
 
 .retail-shortcuts {
-  margin-top: 8px;
-  padding: 8px 10px;
+  margin-top: 6px;
+  padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: linear-gradient(180deg, #fffdfa, #faf4ed);
@@ -1240,44 +1240,46 @@ input[type="file"] {
 
 .retail-combined-shortcuts {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .retail-shortcut-groups {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .retail-shortcut-group {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
 .retail-combined-workspace {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 8px;
+  gap: 6px;
   align-items: start;
 }
 
 .retail-billing-card {
   margin-top: 0;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #fff;
 }
 
 .retail-inline-actions {
-  margin-top: 8px;
+  margin-top: 6px;
   display: flex;
   justify-content: flex-start;
 }
 
 .retail-inline-actions button {
-  min-width: 150px;
+  min-width: 132px;
+  min-height: 34px;
+  padding: 8px 12px;
 }
 
 .offline-banner-actions {
@@ -1291,14 +1293,14 @@ input[type="file"] {
 }
 
 .retail-shortcuts-head {
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .retail-shortcuts-head span {
   display: block;
   margin-bottom: 2px;
   color: var(--brand-dark);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -1307,14 +1309,14 @@ input[type="file"] {
 .retail-shortcuts-head p {
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.35;
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 .retail-shortcut-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .retail-mode-switch {
@@ -1351,15 +1353,15 @@ input[type="file"] {
 .retail-billing-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .retail-billing-panel {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .retail-entry-grid {
@@ -1367,7 +1369,7 @@ input[type="file"] {
 }
 
 .retail-billing-section {
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .retail-billing-section + .retail-billing-section {
@@ -1375,14 +1377,14 @@ input[type="file"] {
 }
 
 .retail-shortcut-chip {
-  min-height: 30px;
-  padding: 4px 10px;
+  min-height: 28px;
+  padding: 3px 9px;
   border: 1px solid #dfc48f;
   border-radius: 999px;
   background: #fff7e8;
   color: var(--brand-dark);
   box-shadow: none;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .retail-shortcut-chip:hover {
@@ -1392,8 +1394,8 @@ input[type="file"] {
 .retail-shortcut-empty {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 4px 10px;
+  min-height: 28px;
+  padding: 3px 9px;
   border: 1px dashed var(--line);
   border-radius: 999px;
   color: var(--muted);
@@ -1588,20 +1590,20 @@ input[type="file"] {
 .retail-items {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .retail-items-horizontal {
-  min-height: 64px;
+  min-height: 56px;
 }
 
 .retail-item-row {
   display: grid;
   grid-template-columns: 1.5fr 0.9fr 0.9fr 1fr 1fr 1fr auto;
-  gap: 6px;
+  gap: 5px;
   align-items: center;
-  padding: 6px;
+  padding: 5px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface-soft);
@@ -1623,8 +1625,9 @@ input[type="file"] {
 .retail-item-row button {
   width: 100%;
   min-width: 0;
-  min-height: 34px;
-  padding-inline: 9px;
+  min-height: 32px;
+  padding-inline: 8px;
+  font-size: 13px;
 }
 
 .retail-item-row-dressed {
