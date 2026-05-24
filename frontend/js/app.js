@@ -949,7 +949,7 @@ function loadPage(page) {
       title.innerText = "Ledger";
 
       content.innerHTML = `
-        <div class="container">
+        <div class="container ledger-page">
 
           <div class="card search-card toolbar">
             <div class="typeahead-field">
@@ -962,17 +962,17 @@ function loadPage(page) {
             <button onclick="searchLedger()">Search</button>
           </div>
 
-          <div class="summary">
+          <div class="summary ledger-summary">
             <div class="summary-box">
               <span>Total Balance</span>
               <h2 id="totalBalance">₹ 0</h2>
             </div>
           </div>
 
-          <div class="grid" id="partySummary"></div>
+          <div class="grid ledger-metrics" id="partySummary"></div>
 
-          <div class="card table-card">
-            <table>
+          <div class="card table-card ledger-table-card">
+            <table class="ledger-table">
               <thead>
                 <tr>
                   <th>Date</th>

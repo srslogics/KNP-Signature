@@ -2385,6 +2385,119 @@ tbody tr:hover {
   overflow-wrap: anywhere;
 }
 
+.ledger-page .toolbar {
+  margin-bottom: 14px;
+}
+
+.ledger-summary {
+  margin: 14px 0 16px;
+}
+
+.ledger-page .summary-box {
+  width: min(100%, 320px);
+  padding: 20px 22px;
+  border-color: rgb(156 123 89 / 0.24);
+  box-shadow: 0 14px 34px rgb(79 49 22 / 0.08);
+}
+
+.ledger-page .summary-box span {
+  font-size: 14px;
+  font-weight: 800;
+  color: #6a5340;
+  letter-spacing: 0.08em;
+}
+
+.ledger-page .summary-box h2 {
+  margin-top: 10px;
+  font-size: clamp(2rem, 3vw, 2.45rem);
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.ledger-metrics {
+  margin-bottom: 16px;
+}
+
+.ledger-metrics .metric {
+  border-color: rgb(156 123 89 / 0.18);
+  box-shadow: 0 10px 24px rgb(79 49 22 / 0.05);
+}
+
+.ledger-metrics .metric span {
+  font-size: 13px;
+  font-weight: 800;
+  color: #6f6254;
+  letter-spacing: 0.05em;
+}
+
+.ledger-metrics .metric h2 {
+  font-size: 1.9rem;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.ledger-table-card {
+  border-color: rgb(156 123 89 / 0.16);
+}
+
+.ledger-table {
+  min-width: 980px;
+}
+
+.ledger-table thead,
+.ledger-table th {
+  background: #f5efe6;
+}
+
+.ledger-table th,
+.ledger-table td {
+  padding: 16px 18px;
+  border-bottom: 1px solid #e7dccf;
+}
+
+.ledger-table th {
+  color: #3c4c56;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+}
+
+.ledger-table td {
+  color: #2d241d;
+  font-size: 15.5px;
+  font-weight: 650;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.ledger-table td:nth-child(1),
+.ledger-table td:nth-child(2),
+.ledger-table td:nth-child(4),
+.ledger-table td:nth-child(9) {
+  font-weight: 720;
+}
+
+.ledger-table td:nth-child(10),
+.ledger-table td:nth-child(11) {
+  font-size: 16.5px;
+  font-weight: 850;
+}
+
+.ledger-table td:nth-child(11) {
+  color: #1e2328;
+}
+
+.ledger-table tbody tr:hover {
+  background: #fcf8f2;
+}
+
+.ledger-table .empty {
+  font-size: 15px;
+  font-weight: 650;
+}
+
 .notice {
   display: none;
   margin-bottom: 22px;
