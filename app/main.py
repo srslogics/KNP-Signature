@@ -4459,8 +4459,9 @@ def list_retail_bills(date: str = None, db: Session = Depends(get_db), current_o
         if not target_date:
             return {"error": "Invalid date format"}
         query = query.filter(models.RetailBill.date == target_date)
-
-    bills = query.limit(50).all()
+        bills = query.all()
+    else:
+        bills = query.limit(50).all()
     bill_ids = [bill.id for bill in bills]
     mode_map = {}
     if bill_ids:
@@ -4516,8 +4517,9 @@ def list_payment_receipts(date: str = None, db: Session = Depends(get_db), curre
         if not target_date:
             return {"error": "Invalid date format"}
         query = query.filter(models.PaymentReceipt.date == target_date)
-
-    receipts = query.limit(50).all()
+        receipts = query.all()
+    else:
+        receipts = query.limit(50).all()
 
     return {
         "results": [
