@@ -1427,6 +1427,133 @@ def safe_filename(value):
     return quote(cleaned[:120] or "report")
 
 
+def append_daily_sheet_goods_rows(export_rows, section_name, section):
+    if not section:
+        return
+    for row in section.get("rows", []) or []:
+        export_rows.append({
+            "Section": section_name,
+            "Label": "Row",
+            "Name": row.get("goods", ""),
+            "Nag": row.get("nag", ""),
+            "Weight": row.get("weight", ""),
+            "Rate": row.get("rate", ""),
+            "Total": row.get("total", ""),
+            "Mode": "",
+            "Paid": "",
+            "Outstanding": ""
+        })
+    total = section.get("total")
+    if total:
+        export_rows.append({
+            "Section": section_name,
+            "Label": "Total",
+            "Name": total.get("goods", "TOTAL"),
+            "Nag": total.get("nag", ""),
+            "Weight": total.get("weight", ""),
+            "Rate": total.get("rate", ""),
+            "Total": total.get("total", ""),
+            "Mode": "",
+            "Paid": "",
+            "Outstanding": ""
+        })
+
+
+def build_daily_sheet_export_report(sheet_payload, sheet_type, target_date):
+    if sheet_type in ["vendor", "dealer"]:
+        rows = [
+            {
+                "Party Name": row.get("party_name", ""),
+                "Old Bal": row.get("old_balance", 0),
+                "Purchases": row.get("purchases", 0),
+                "Payment": row.get("payment", 0),
+                "Balance": row.get("balance", 0)
+            }
+            for row in (sheet_payload.get("rows") or [])
+        ]
+        totals = sheet_payload.get("totals") or {}
+        if totals:
+            rows.append({
+                "Party Name": totals.get("party_name", "TOTAL"),
+                "Old Bal": totals.get("old_balance", 0),
+                "Purchases": totals.get("purchases", 0),
+                "Payment": totals.get("payment", 0),
+                "Balance": totals.get("balance", 0)
+            })
+
+        columns = ["Party Name", "Old Bal", "Purchases", "Payment", "Balance"]
+        filename = safe_filename(f"{sheet_type}_balance_sheet_{target_date}")
+        title = sheet_payload.get("title") or f"{sheet_type.title()} Balance Sheet"
+        return report_response(rows, columns, filename, "excel", title)
+
+    rows = []
+    append_daily_sheet_goods_rows(rows, "Opening Stock", sheet_payload.get("opening_stock") or {})
+    append_daily_sheet_goods_rows(rows, "Purchase Stock", sheet_payload.get("purchase_stock") or {})
+    append_daily_sheet_goods_rows(rows, "Transportation Mortality", sheet_payload.get("transport_mortality_stock") or {})
+    append_daily_sheet_goods_rows(rows, "Shop Mortality", sheet_payload.get("shop_mortality_stock") or {})
+    for section in sheet_payload.get("sales_sections") or []:
+        append_daily_sheet_goods_rows(rows, section.get("title", "Sales"), section)
+
+    final_stock = sheet_payload.get("final_stock") or {}
+    for key in [
+        "total_purchases",
+        "transport_mortality",
+        "shop_mortality",
+        "sales",
+        "closing_stock",
+        "actual_stock",
+        "short_by"
+    ]:
+        row = final_stock.get(key)
+        if row:
+            rows.append({
+                "Section": "Final Stock",
+                "Label": "Summary",
+                "Name": row.get("goods", ""),
+                "Nag": row.get("nag", ""),
+                "Weight": row.get("weight", ""),
+                "Rate": row.get("rate", ""),
+                "Total": row.get("total", ""),
+                "Mode": "",
+                "Paid": "",
+                "Outstanding": ""
+            })
+
+    retail_credit = sheet_payload.get("retail_credit_sheet") or {}
+    for row in retail_credit.get("rows", []) or []:
+        rows.append({
+            "Section": "Retail Credit",
+            "Label": "Row",
+            "Name": row.get("customer_name", ""),
+            "Nag": row.get("bill_number", ""),
+            "Weight": row.get("total_amount", ""),
+            "Rate": "",
+            "Total": row.get("outstanding_amount", ""),
+            "Mode": row.get("mode", ""),
+            "Paid": row.get("paid_amount", ""),
+            "Outstanding": row.get("outstanding_amount", "")
+        })
+    total_credit = retail_credit.get("total")
+    if total_credit:
+        rows.append({
+            "Section": "Retail Credit",
+            "Label": "Total",
+            "Name": total_credit.get("label", "TOTAL CREDIT"),
+            "Nag": "",
+            "Weight": total_credit.get("total_amount", ""),
+            "Rate": "",
+            "Total": total_credit.get("outstanding_amount", ""),
+            "Mode": "",
+            "Paid": total_credit.get("paid_amount", ""),
+            "Outstanding": total_credit.get("outstanding_amount", "")
+        })
+
+    columns = ["Section", "Label", "Name", "Nag", "Weight", "Rate", "Total", "Mode", "Paid", "Outstanding"]
+    filename = safe_filename(f"stock_sheet_{target_date}")
+    title = sheet_payload.get("title") or "Stock Sheet"
+    return report_response(rows, columns, filename, "excel", title)
+
+
 def latest_item_rates(db: Session, target_date, scope=None):
     query = db.query(
         models.Transaction.item_type,
@@ -6094,6 +6221,25 @@ def daily_sheet(
             }
         }
     }
+
+
+@app.get("/daily-sheet/export")
+def export_daily_sheet(
+    date: str,
+    sheet_type: str = "stock",
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    scope=Depends(get_outlet_scope)
+):
+    sheet_payload = daily_sheet(date=date, sheet_type=sheet_type, db=db, user=user, scope=scope)
+    if isinstance(sheet_payload, dict) and sheet_payload.get("error"):
+        return sheet_payload
+
+    target_date = parse_input_date(date)
+    if not target_date:
+        return {"error": "Invalid date format"}
+
+    return build_daily_sheet_export_report(sheet_payload, sheet_type.strip().lower(), target_date)
 
 
 @app.get("/inventory/by-item")

@@ -94,190 +94,72 @@ async function loadDailySheet() {
 }
 
 function downloadDailySheetExcel() {
-  if (!lastDailySheetExport?.data) {
+  const date = document.getElementById("dailySheetDate")?.value;
+  const sheetType = document.getElementById("dailySheetType")?.value || "stock";
+
+  if (!date) {
     showToast("Load the sheet first");
     return;
   }
 
   try {
-    const workbookXml = buildDailySheetWorkbookXml(lastDailySheetExport);
-    const blob = new Blob([workbookXml], { type: "application/vnd.ms-excel;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const safeTitle = String(lastDailySheetExport.title || "daily-sheet")
-      .replace(/[^a-z0-9]+/gi, "-")
-      .replace(/^-+|-+$/g, "")
-      .toLowerCase();
-    link.href = url;
-    link.download = `${safeTitle || "daily-sheet"}-${lastDailySheetExport.date}.xls`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    showToast("Excel downloaded");
+    downloadDailySheetExcelFile(date, sheetType);
   } catch (error) {
     console.error(error);
     showToast("Excel download failed");
   }
 }
 
-function buildDailySheetWorkbookXml(exportState) {
-  const { sheetType, title, date, data } = exportState;
-  const rows = [];
+async function downloadDailySheetExcelFile(date, sheetType) {
+  const params = new URLSearchParams({
+    date,
+    sheet_type: sheetType
+  });
 
-  rows.push([`${title} ${formatDisplayDate(date)}`]);
-  rows.push([]);
+  const headers = {};
+  const authToken = typeof getAuthToken === "function" ? getAuthToken() : "";
+  if (authToken) headers["X-Auth-Token"] = authToken;
 
-  if (sheetType === "stock") {
-    appendLabeledRows(rows, "Opening Stock", data.opening_stock);
-    appendLabeledRows(rows, "Purchase Stock", data.purchase_stock);
-    appendOptionalLabeledRows(rows, "Transportation Mortality", data.transport_mortality_stock);
-    appendOptionalLabeledRows(rows, "Shop Mortality", data.shop_mortality_stock);
-    (data.sales_sections || []).forEach((section) => appendLabeledRows(rows, section.title, section));
-    if (data.retail_credit_sheet?.rows?.length) {
-      rows.push([]);
-      rows.push(["Retail Credit Customers"]);
-      rows.push(["Customer", "Bill No", "Total", "Paid", "Outstanding", "Mode"]);
-      (data.retail_credit_sheet.rows || []).forEach((row) => {
-        rows.push([
-          row.customer_name || "",
-          row.bill_number || "",
-          numberForExport(row.total_amount),
-          numberForExport(row.paid_amount),
-          numberForExport(row.outstanding_amount),
-          row.mode || ""
-        ]);
-      });
-      if (data.retail_credit_sheet.total) {
-        rows.push([
-          data.retail_credit_sheet.total.label || "TOTAL",
-          "",
-          numberForExport(data.retail_credit_sheet.total.total_amount),
-          numberForExport(data.retail_credit_sheet.total.paid_amount),
-          numberForExport(data.retail_credit_sheet.total.outstanding_amount),
-          ""
-        ]);
-      }
+  const selectedOutletId = typeof getSelectedOutletId === "function" ? getSelectedOutletId() : "";
+  if (selectedOutletId) headers["X-Outlet-Id"] = selectedOutletId;
+
+  const response = await withLoading("Preparing Excel...", () => (
+    fetchWithRetry(`${BASE_URL}/daily-sheet/export?${params.toString()}`, { headers })
+  ));
+
+  if (response.status === 401) {
+    if (typeof clearAuthState === "function") {
+      clearAuthState();
     }
-    if (data.final_stock) {
-      rows.push([]);
-      rows.push(["Final Stock"]);
-      rows.push(["Goods", "Nag", "Weight", "Rate", "Total"]);
-      [
-        data.final_stock.total_purchases,
-        data.final_stock.transport_mortality,
-        data.final_stock.shop_mortality,
-        data.final_stock.sales,
-        data.final_stock.closing_stock,
-        data.final_stock.actual_stock,
-        data.final_stock.short_by
-      ].forEach((row) => rows.push(buildGoodsRow(row)));
-      if (data.final_stock.gross_profit) {
-        rows.push([]);
-        rows.push(["Gross Profit %", numberForExport(data.final_stock.gross_profit.rate)]);
-        rows.push(["Gross Profit Total", numberForExport(data.final_stock.gross_profit.total)]);
-      }
-    }
-  } else {
-    rows.push(["Party Name", "Old Bal", "Purchases", "Payment", "Balance"]);
-    (data.rows || []).forEach((row) => {
-      rows.push([
-        row.party_name || "",
-        numberForExport(row.old_balance),
-        numberForExport(row.purchases),
-        numberForExport(row.payment),
-        numberForExport(row.balance)
-      ]);
-    });
-    if (data.totals) {
-      rows.push([
-        data.totals.party_name || "TOTAL",
-        numberForExport(data.totals.old_balance),
-        numberForExport(data.totals.purchases),
-        numberForExport(data.totals.payment),
-        numberForExport(data.totals.balance)
-      ]);
-    }
+    throw new Error("AUTH_REQUIRED");
   }
 
-  return buildSpreadsheetXml(title, rows);
-}
-
-function appendOptionalLabeledRows(targetRows, title, section) {
-  if (section?.rows?.length) {
-    appendLabeledRows(targetRows, title, section);
+  if (!response.ok) {
+    throw new Error(`Daily sheet export failed: ${response.status}`);
   }
-}
 
-function appendLabeledRows(targetRows, title, section) {
-  targetRows.push([]);
-  targetRows.push([title]);
-  targetRows.push(["Goods", "Nag", "Weight", "Rate", "Total"]);
-  (section?.rows || []).forEach((row) => targetRows.push(buildGoodsRow(row)));
-  if (section?.total) {
-    targetRows.push(buildGoodsRow(section.total));
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const data = await response.json();
+    showToast(data.error || "Excel could not be downloaded");
+    return;
   }
-}
 
-function buildGoodsRow(row) {
-  return [
-    row?.goods || "",
-    row?.nag === "" || row?.nag == null ? "" : numberForExport(row.nag),
-    numberForExport(row?.weight),
-    numberForExport(row?.rate),
-    numberForExport(row?.total)
-  ];
-}
-
-function numberForExport(value) {
-  if (value === "" || value == null) return "";
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : value;
-}
-
-function buildSpreadsheetXml(title, rows) {
-  const safeSheetName = sanitizeWorksheetName(title || "Daily Sheet");
-  const xmlRows = rows.map(buildSpreadsheetRowXml).join("");
-
-  return `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-  <Worksheet ss:Name="${escapeXml(safeSheetName)}">
-    <Table>
-      ${xmlRows}
-    </Table>
-  </Worksheet>
-</Workbook>`;
-}
-
-function buildSpreadsheetRowXml(cells) {
-  const xmlCells = (cells || []).map((cell) => {
-    const numeric = typeof cell === "number" && Number.isFinite(cell);
-    const type = numeric ? "Number" : "String";
-    const value = numeric ? String(cell) : escapeXml(String(cell ?? ""));
-    return `<Cell><Data ss:Type="${type}">${value}</Data></Cell>`;
-  }).join("");
-
-  return `<Row>${xmlCells}</Row>`;
-}
-
-function sanitizeWorksheetName(name) {
-  return String(name || "Daily Sheet")
-    .replace(/[\\/*?:[\]]/g, " ")
-    .trim()
-    .slice(0, 31) || "Daily Sheet";
-}
-
-function escapeXml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+  const blob = await response.blob();
+  const title = lastDailySheetExport?.title || formatSheetType(sheetType);
+  const safeTitle = String(title || "daily-sheet")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${safeTitle || "daily-sheet"}-${date}.xlsx`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast("Excel downloaded");
 }
 
 function createSheetSection(title, section) {
