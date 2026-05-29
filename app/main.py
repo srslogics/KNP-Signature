@@ -5505,17 +5505,18 @@ def daily_sheet(
     processed_by_item = {row.item_type: row for row in processed_rows}
 
     opening_source = {}
-    prev_rows = apply_outlet_scope(
-        db.query(models.DailyItemStock).filter(models.DailyItemStock.date < target_date),
+    previous_date = target_date - timedelta(days=1)
+    previous_day_rows = apply_outlet_scope(
+        db.query(models.DailyItemStock).filter(models.DailyItemStock.date == previous_date),
         models.DailyItemStock,
         scope
-    ).order_by(models.DailyItemStock.date.desc()).all()
-    if prev_rows:
-        for row in prev_rows:
-            opening_source.setdefault(row.item_type, {
+    ).all()
+    if previous_day_rows:
+        for row in previous_day_rows:
+            opening_source[row.item_type] = {
                 "nag": Decimal(row.actual_closing_quantity or 0) if row.actual_closing_quantity is not None else None,
                 "weight": Decimal(row.actual_closing_weight or 0)
-            })
+            }
 
     if processed_rows:
         for row in processed_rows:
