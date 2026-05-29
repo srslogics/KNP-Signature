@@ -1340,7 +1340,10 @@ function loadPage(page) {
               <div>
                 <h2 id="dailySheetTitle">Opening Stock</h2>
               </div>
-              <button onclick="window.print()">Print</button>
+              <div class="section-head-actions">
+                <button onclick="downloadDailySheetExcel()">Download Excel</button>
+                <button onclick="window.print()">Print</button>
+              </div>
             </div>
 
             <div id="dailySheetMeta" class="notice info"></div>

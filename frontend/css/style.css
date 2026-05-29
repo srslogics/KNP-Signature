@@ -426,6 +426,13 @@ input[type="file"] {
   border-bottom: 1px solid rgb(230 218 207 / 0.75);
 }
 
+.section-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .compact-section-head {
   justify-content: flex-end;
   margin-bottom: 8px;
