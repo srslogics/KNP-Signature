@@ -1239,8 +1239,8 @@ def build_balance_sheet_rows_from_ledger(
                 old_balance += running_delta(txn, settled_keys)
                 continue
 
-            purchases += day_purchase_amount(txn, target_date)
-            payment += day_payment_amount(txn, target_date)
+            purchases += day_purchase_amount(txn, target_date, settled_keys)
+            payment += day_payment_amount(txn, target_date, settled_keys)
 
         balance = old_balance + purchases - payment
 
@@ -5376,32 +5376,21 @@ def daily_sheet(
                 models.Party.type == "VENDOR",
                 models.Party.type == "BOTH"
             )
-            non_retail_sale = (
-                (models.Transaction.type == "SALE") &
-                or_(
-                    models.Transaction.category.is_(None),
-                    ~models.Transaction.category.in_(["RETAIL", "RETAIL DRESSED"])
-                )
-            )
             received_payment = (
                 (models.Transaction.type == "PAYMENT") &
-                (models.Transaction.category == "RECEIVED") &
-                or_(
-                    models.Transaction.item_type.is_(None),
-                    models.Transaction.item_type != "Retail Bill Payment"
-                )
+                (models.Transaction.category == "RECEIVED")
             )
             relevant_filter = (
-                non_retail_sale |
+                (models.Transaction.type == "SALE") |
                 ((models.Transaction.type == "OPENING") & (models.Transaction.category == "RECEIVABLE")) |
                 received_payment
             )
 
             def include_txn(txn):
                 return (
-                    ((txn.type == "SALE") and ((txn.category or "").upper() not in ["RETAIL", "RETAIL DRESSED"])) or
+                    (txn.type == "SALE") or
                     (txn.type == "OPENING" and (txn.category or "").upper() == "RECEIVABLE") or
-                    (txn.type == "PAYMENT" and (txn.category or "").upper() == "RECEIVED" and (txn.item_type or "") != "Retail Bill Payment")
+                    (txn.type == "PAYMENT" and (txn.category or "").upper() == "RECEIVED")
                 )
 
             def opening_belongs_to_old(txn, current_date):
@@ -5410,11 +5399,13 @@ def daily_sheet(
             def running_delta(txn, settled_keys):
                 return receivable_delta(txn, settled_keys)
 
-            def day_purchase_amount(txn, current_date):
-                return Decimal(txn.amount or 0) if txn.date == current_date and txn.type == "SALE" and ((txn.category or "").upper() not in ["RETAIL", "RETAIL DRESSED"]) else Decimal("0")
+            def day_purchase_amount(txn, current_date, settled_keys):
+                if txn.date != current_date or txn.type != "SALE":
+                    return Decimal("0")
+                return max(receivable_delta(txn, settled_keys), Decimal("0"))
 
-            def day_payment_amount(txn, current_date):
-                return Decimal(txn.amount or 0) if txn.date == current_date and (txn.type == "PAYMENT") and ((txn.category or "").upper() == "RECEIVED") and (txn.item_type or "") != "Retail Bill Payment" else Decimal("0")
+            def day_payment_amount(txn, current_date, settled_keys):
+                return Decimal(txn.amount or 0) if txn.date == current_date and (txn.type == "PAYMENT") and ((txn.category or "").upper() == "RECEIVED") else Decimal("0")
         else:
             party_type_filter = or_(
                 models.Party.type == "DEALER",
@@ -5438,10 +5429,10 @@ def daily_sheet(
             def running_delta(txn, settled_keys):
                 return payable_delta(txn)
 
-            def day_purchase_amount(txn, current_date):
+            def day_purchase_amount(txn, current_date, settled_keys):
                 return Decimal(txn.amount or 0) if txn.date == current_date and txn.type == "PURCHASE" else Decimal("0")
 
-            def day_payment_amount(txn, current_date):
+            def day_payment_amount(txn, current_date, settled_keys):
                 return Decimal(txn.amount or 0) if txn.date == current_date and txn.type == "PAYMENT" and (txn.category or "").upper() == "PAID" else Decimal("0")
 
         party_txn_rows = db.query(
