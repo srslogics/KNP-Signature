@@ -33,12 +33,16 @@ async function loadDashboard() {
     setValue("dashboardPaymentsPaid", data.payments_paid);
     setKgValue("dashboardMortality", data.mortality_weight);
     setTextValue("dashboardMortalityNag", `${Number(data.mortality_quantity || 0).toLocaleString()} NAG`);
-    setTextValue("dashboardProcessStatus", Number(data.processed_items_count || 0) > 0 ? "Processed" : "Pending");
+    setTextValue(
+      "dashboardProcessStatus",
+      data.process_status || (Number(data.processed_items_count || 0) > 0 ? "Processed" : "Pending")
+    );
     setTextValue(
       "dashboardProcessMeta",
-      Number(data.processed_items_count || 0) > 0
-        ? `${Number(data.processed_items_count || 0).toLocaleString()} item rows processed`
-        : "No item rows processed"
+      data.process_meta ||
+        (Number(data.processed_items_count || 0) > 0
+          ? `${Number(data.processed_items_count || 0).toLocaleString()} item rows processed`
+          : "No item rows processed")
     );
 
     // --- Date range (last 7 days)

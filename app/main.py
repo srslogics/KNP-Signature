@@ -4143,7 +4143,8 @@ def get_dashboard(date: str, db: Session = Depends(get_db), scope=Depends(get_ou
             db.query(
                 func.sum(models.DailyStock.expected_closing_weight).label("expected_closing_weight"),
                 func.sum(models.DailyStock.actual_closing_weight).label("actual_closing_weight"),
-                func.sum(models.DailyStock.leakage).label("leakage")
+                func.sum(models.DailyStock.leakage).label("leakage"),
+                func.count(models.DailyStock.id).label("row_count")
             ).filter(models.DailyStock.date == target_date),
             models.DailyStock,
             scope
@@ -4153,6 +4154,21 @@ def get_dashboard(date: str, db: Session = Depends(get_db), scope=Depends(get_ou
             models.DailyItemStock,
             scope
         ).count()
+        has_daily_stock = bool(
+            stock
+            and (
+                (stock.row_count or 0) > 0
+                or stock.expected_closing_weight is not None
+                or stock.actual_closing_weight is not None
+                or stock.leakage is not None
+            )
+        )
+        is_processed = int(processed_rows or 0) > 0 or has_daily_stock
+        process_meta = (
+            f"{int(processed_rows or 0):,} item rows processed"
+            if int(processed_rows or 0) > 0
+            else ("Day processed" if has_daily_stock else "No item rows processed")
+        )
 
         # --- Profit (simple approximation) ---
         profit = float(sales or 0) - float(purchase or 0)
@@ -4180,7 +4196,9 @@ def get_dashboard(date: str, db: Session = Depends(get_db), scope=Depends(get_ou
         "payments_paid": float(payments_paid or 0),
         "mortality_weight": float(mortality_weight or 0),
         "mortality_quantity": float(mortality_quantity or 0),
-        "processed_items_count": int(processed_rows or 0)
+        "processed_items_count": int(processed_rows or 0),
+        "process_status": "Processed" if is_processed else "Pending",
+        "process_meta": process_meta
     }
 
 
@@ -5487,34 +5505,35 @@ def daily_sheet(
     processed_by_item = {row.item_type: row for row in processed_rows}
 
     opening_source = {}
+    prev_rows = apply_outlet_scope(
+        db.query(models.DailyItemStock).filter(models.DailyItemStock.date < target_date),
+        models.DailyItemStock,
+        scope
+    ).order_by(models.DailyItemStock.date.desc()).all()
+    if prev_rows:
+        for row in prev_rows:
+            opening_source.setdefault(row.item_type, {
+                "nag": Decimal(row.actual_closing_quantity or 0) if row.actual_closing_quantity is not None else None,
+                "weight": Decimal(row.actual_closing_weight or 0)
+            })
+
     if processed_rows:
         for row in processed_rows:
-            opening_source[row.item_type] = {
+            opening_source.setdefault(row.item_type, {
                 "nag": Decimal(row.opening_quantity or 0) if row.opening_quantity is not None else None,
                 "weight": Decimal(row.opening_weight or 0)
-            }
-    else:
-        prev_rows = apply_outlet_scope(
-            db.query(models.DailyItemStock).filter(models.DailyItemStock.date < target_date),
-            models.DailyItemStock,
+            })
+
+    if not opening_source:
+        for row in apply_outlet_scope(
+            db.query(models.ItemOpeningStock).filter(models.ItemOpeningStock.date <= target_date),
+            models.ItemOpeningStock,
             scope
-        ).order_by(models.DailyItemStock.date.desc()).all()
-        if prev_rows:
-            for row in prev_rows:
-                opening_source.setdefault(row.item_type, {
-                    "nag": Decimal(row.actual_closing_quantity or 0) if row.actual_closing_quantity is not None else None,
-                    "weight": Decimal(row.actual_closing_weight or 0)
-                })
-        else:
-            for row in apply_outlet_scope(
-                db.query(models.ItemOpeningStock).filter(models.ItemOpeningStock.date <= target_date),
-                models.ItemOpeningStock,
-                scope
-            ).order_by(models.ItemOpeningStock.date.desc()).all():
-                opening_source.setdefault(row.item_type, {
-                    "nag": Decimal(row.opening_quantity or 0) if row.opening_quantity is not None else None,
-                    "weight": Decimal(row.opening_weight or 0)
-                })
+        ).order_by(models.ItemOpeningStock.date.desc()).all():
+            opening_source.setdefault(row.item_type, {
+                "nag": Decimal(row.opening_quantity or 0) if row.opening_quantity is not None else None,
+                "weight": Decimal(row.opening_weight or 0)
+            })
 
     opening_rows = []
     opening_total_quantity = None

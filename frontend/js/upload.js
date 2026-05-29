@@ -157,6 +157,9 @@ async function handleUpload(inputId, endpoint, label, preview = false) {
         const leakageText = `Leakage: ${Number(data.total_leakage || 0).toLocaleString()} kg${quantityLeakage ? `, ${quantityLeakage.toLocaleString()} NAG` : ""}`;
         showToast(`Processed. ${leakageText}`);
         setUploadStatus("success", `Day processed. ${leakageText}`);
+        if (typeof clearOperationalCaches === "function") {
+          clearOperationalCaches();
+        }
       }
 
     } catch (e) {
