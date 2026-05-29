@@ -1204,6 +1204,61 @@ def payable_delta(txn):
     return Decimal("0")
 
 
+def build_balance_sheet_rows_from_ledger(
+    db: Session,
+    grouped_parties: dict,
+    target_date,
+    include_txn,
+    running_delta,
+    day_purchase_amount,
+    day_payment_amount,
+    opening_belongs_to_old
+):
+    result_rows = []
+    total_old = Decimal("0")
+    total_purchases = Decimal("0")
+    total_payment = Decimal("0")
+    total_balance = Decimal("0")
+
+    for party_data in grouped_parties.values():
+        txns = [txn for txn in party_data["txns"] if include_txn(txn)]
+        if not txns:
+            continue
+
+        settled_keys = settled_retail_bill_keys(db, txns)
+        old_balance = Decimal("0")
+        purchases = Decimal("0")
+        payment = Decimal("0")
+
+        for txn in txns:
+            if opening_belongs_to_old(txn, target_date):
+                old_balance += running_delta(txn, settled_keys)
+                continue
+
+            if txn.date < target_date:
+                old_balance += running_delta(txn, settled_keys)
+                continue
+
+            purchases += day_purchase_amount(txn, target_date)
+            payment += day_payment_amount(txn, target_date)
+
+        balance = old_balance + purchases - payment
+
+        if old_balance == 0 and purchases == 0 and payment == 0 and balance == 0:
+            continue
+
+        result_rows.append(format_balance_row(party_data["party_name"], old_balance, purchases, payment, balance))
+        total_old += old_balance
+        total_purchases += purchases
+        total_payment += payment
+        total_balance += balance
+
+    return {
+        "rows": result_rows,
+        "totals": format_balance_row("TOTAL", total_old, total_purchases, total_payment, total_balance)
+    }
+
+
 def receivable_case():
     return case(
         (
@@ -5317,6 +5372,10 @@ def daily_sheet(
 
     if sheet_type in ["vendor", "dealer"]:
         if sheet_type == "vendor":
+            party_type_filter = or_(
+                models.Party.type == "VENDOR",
+                models.Party.type == "BOTH"
+            )
             non_retail_sale = (
                 (models.Transaction.type == "SALE") &
                 or_(
@@ -5337,116 +5396,94 @@ def daily_sheet(
                 ((models.Transaction.type == "OPENING") & (models.Transaction.category == "RECEIVABLE")) |
                 received_payment
             )
-            old_case = case(
-                (
-                    (models.Transaction.date < target_date) & non_retail_sale,
-                    models.Transaction.amount
-                ),
-                (
-                    (models.Transaction.date <= target_date) & (models.Transaction.type == "OPENING") & (models.Transaction.category == "RECEIVABLE"),
-                    models.Transaction.amount
-                ),
-                (
-                    (models.Transaction.date < target_date) & (models.Transaction.type == "PAYMENT") & (models.Transaction.category == "RECEIVED"),
-                    -models.Transaction.amount
-                ),
-                else_=0
-            )
-            purchases_case = case(
-                (
-                    (models.Transaction.date == target_date) & non_retail_sale,
-                    models.Transaction.amount
-                ),
-                else_=0
-            )
-            payment_case = case(
-                (
-                    (models.Transaction.date == target_date) & received_payment,
-                    models.Transaction.amount
-                ),
-                else_=0
-            )
+
+            def include_txn(txn):
+                return (
+                    ((txn.type == "SALE") and ((txn.category or "").upper() not in ["RETAIL", "RETAIL DRESSED"])) or
+                    (txn.type == "OPENING" and (txn.category or "").upper() == "RECEIVABLE") or
+                    (txn.type == "PAYMENT" and (txn.category or "").upper() == "RECEIVED" and (txn.item_type or "") != "Retail Bill Payment")
+                )
+
+            def opening_belongs_to_old(txn, current_date):
+                return txn.type == "OPENING" and (txn.category or "").upper() == "RECEIVABLE" and txn.date <= current_date
+
+            def running_delta(txn, settled_keys):
+                return receivable_delta(txn, settled_keys)
+
+            def day_purchase_amount(txn, current_date):
+                return Decimal(txn.amount or 0) if txn.date == current_date and txn.type == "SALE" and ((txn.category or "").upper() not in ["RETAIL", "RETAIL DRESSED"]) else Decimal("0")
+
+            def day_payment_amount(txn, current_date):
+                return Decimal(txn.amount or 0) if txn.date == current_date and (txn.type == "PAYMENT") and ((txn.category or "").upper() == "RECEIVED") and (txn.item_type or "") != "Retail Bill Payment" else Decimal("0")
         else:
+            party_type_filter = or_(
+                models.Party.type == "DEALER",
+                models.Party.type == "BOTH"
+            )
             relevant_filter = (
                 (models.Transaction.type == "PURCHASE") |
                 ((models.Transaction.type == "OPENING") & (models.Transaction.category == "PAYABLE")) |
-                (models.Transaction.type == "PAYMENT")
+                ((models.Transaction.type == "PAYMENT") & (models.Transaction.category == "PAID"))
             )
-            old_case = case(
-                (
-                    (models.Transaction.date < target_date) & (models.Transaction.type == "PURCHASE"),
-                    models.Transaction.amount
-                ),
-                (
-                    (models.Transaction.date <= target_date) & (models.Transaction.type == "OPENING") & (models.Transaction.category == "PAYABLE"),
-                    models.Transaction.amount
-                ),
-                (
-                    (models.Transaction.date < target_date) & (models.Transaction.type == "PAYMENT"),
-                    -models.Transaction.amount
-                ),
-                else_=0
-            )
-            purchases_case = case(
-                (
-                    (models.Transaction.date == target_date) & (models.Transaction.type == "PURCHASE"),
-                    models.Transaction.amount
-                ),
-                else_=0
-            )
-            payment_case = case(
-                (
-                    (models.Transaction.date == target_date) & (models.Transaction.type == "PAYMENT"),
-                    models.Transaction.amount
-                ),
-                else_=0
-            )
+            def include_txn(txn):
+                return (
+                    txn.type == "PURCHASE" or
+                    (txn.type == "OPENING" and (txn.category or "").upper() == "PAYABLE") or
+                    (txn.type == "PAYMENT" and (txn.category or "").upper() == "PAID")
+                )
 
-        rows = db.query(
+            def opening_belongs_to_old(txn, current_date):
+                return txn.type == "OPENING" and (txn.category or "").upper() == "PAYABLE" and txn.date <= current_date
+
+            def running_delta(txn, settled_keys):
+                return payable_delta(txn)
+
+            def day_purchase_amount(txn, current_date):
+                return Decimal(txn.amount or 0) if txn.date == current_date and txn.type == "PURCHASE" else Decimal("0")
+
+            def day_payment_amount(txn, current_date):
+                return Decimal(txn.amount or 0) if txn.date == current_date and txn.type == "PAYMENT" and (txn.category or "").upper() == "PAID" else Decimal("0")
+
+        party_txn_rows = db.query(
+            models.Party.id.label("party_id"),
             models.Party.name.label("party_name"),
-            func.sum(old_case).label("old_balance"),
-            func.sum(purchases_case).label("purchases"),
-            func.sum(payment_case).label("payment")
+            models.Transaction
         ).join(
             models.Transaction,
             models.Transaction.party_id == models.Party.id
         ).filter(
             relevant_filter,
+            party_type_filter,
+            models.Transaction.date <= target_date,
             outlet_scope_filter(models.Transaction, scope)
-        ).group_by(
-            models.Party.id,
-            models.Party.name
         ).order_by(
-            models.Party.name.asc()
+            models.Party.name.asc(),
+            models.Transaction.date.asc(),
+            models.Transaction.created_at.asc()
         ).all()
 
-        result_rows = []
-        total_old = Decimal("0")
-        total_purchases = Decimal("0")
-        total_payment = Decimal("0")
-        total_balance = Decimal("0")
+        grouped_parties = {}
+        for party_id, party_name, txn in party_txn_rows:
+            bucket = grouped_parties.setdefault(party_id, {"party_name": party_name, "txns": []})
+            bucket["txns"].append(txn)
 
-        for row in rows:
-            old_balance = Decimal(row.old_balance or 0)
-            purchases = Decimal(row.purchases or 0)
-            payment = Decimal(row.payment or 0)
-            balance = old_balance + purchases - payment
-
-            if old_balance == 0 and purchases == 0 and payment == 0 and balance == 0:
-                continue
-
-            result_rows.append(format_balance_row(row.party_name, old_balance, purchases, payment, balance))
-            total_old += old_balance
-            total_purchases += purchases
-            total_payment += payment
-            total_balance += balance
+        sheet_data = build_balance_sheet_rows_from_ledger(
+            db=db,
+            grouped_parties=grouped_parties,
+            target_date=target_date,
+            include_txn=include_txn,
+            running_delta=running_delta,
+            day_purchase_amount=day_purchase_amount,
+            day_payment_amount=day_payment_amount,
+            opening_belongs_to_old=opening_belongs_to_old
+        )
 
         return {
             "date": str(target_date),
             "sheet_type": sheet_type,
             "title": "Vendor Balance Sheet" if sheet_type == "vendor" else "Dealer Balance Sheet",
-            "rows": result_rows,
-            "totals": format_balance_row("TOTAL", total_old, total_purchases, total_payment, total_balance)
+            "rows": sheet_data["rows"],
+            "totals": sheet_data["totals"]
         }
 
     rates = latest_item_rates(db, target_date, scope)
