@@ -140,6 +140,7 @@ async function handleUpload(inputId, endpoint, label, preview = false) {
 
     showToast("Processing day...");
     toggleButtons(true);
+    setProcessDaySummary("info", "Saving Process Day...");
 
     try {
       const data = await apiCall(
@@ -152,11 +153,22 @@ async function handleUpload(inputId, endpoint, label, preview = false) {
       if (data.error) {
         showToast(data.error);
         setUploadStatus("error", data.error);
+        setProcessDaySummary("error", data.error);
       } else {
         const quantityLeakage = Number(data.total_quantity_leakage || 0);
         const leakageText = `Leakage: ${Number(data.total_leakage || 0).toLocaleString()} kg${quantityLeakage ? `, ${quantityLeakage.toLocaleString()} NAG` : ""}`;
         showToast(`Processed. ${leakageText}`);
         setUploadStatus("success", `Day processed. ${leakageText}`);
+        setProcessDaySummary(
+          "success",
+          `Process Day saved for ${formatProcessDayDisplayDate(data.date || date)}`,
+          [
+            `Hen types saved: ${Array.isArray(data.items) ? data.items.length : rows.length}`,
+            `Expected stock: ${formatProcessMetric(data.total_expected_stock, "kg")} ${formatProcessMetricInline(data.total_expected_nag, "NAG")}`,
+            `Actual stock: ${formatProcessMetric(data.total_actual_stock, "kg")} ${formatProcessMetricInline(data.total_actual_nag, "NAG")}`,
+            `Short by: ${formatProcessMetric(data.total_leakage, "kg")} ${formatProcessMetricInline(data.total_quantity_leakage, "NAG")}`
+          ]
+        );
         if (typeof clearOperationalCaches === "function") {
           clearOperationalCaches();
         }
@@ -166,8 +178,50 @@ async function handleUpload(inputId, endpoint, label, preview = false) {
       console.error(e);
       showToast("Processing failed");
       setUploadStatus("error", "Processing failed. Check backend connection and entered stock values.");
+      setProcessDaySummary("error", "Process Day did not save.", [
+        "The day will not update Actual Stock.",
+        "The next day opening stock will also not carry forward until this saves successfully."
+      ]);
     } finally {
       toggleButtons(false);
+    }
+  }
+
+  function formatProcessDayDisplayDate(date) {
+    if (!date) return "";
+    const parsed = new Date(`${date}T00:00:00`);
+    return parsed.toLocaleDateString("en-GB");
+  }
+
+  function formatProcessMetric(value, suffix) {
+    return `${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${suffix}`;
+  }
+
+  function formatProcessMetricInline(value, suffix) {
+    if (value === null || value === undefined || value === "") return "";
+    return `| ${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${suffix}`;
+  }
+
+  function setProcessDaySummary(type, message, details = []) {
+    const summary = document.getElementById("processDaySummary");
+    if (!summary) return;
+
+    summary.style.display = "";
+    summary.className = `notice upload-status ${type}`;
+    summary.innerHTML = "";
+
+    const title = document.createElement("strong");
+    title.innerText = message;
+    summary.appendChild(title);
+
+    if (details.length) {
+      const list = document.createElement("ul");
+      details.forEach(detail => {
+        const item = document.createElement("li");
+        item.innerText = detail;
+        list.appendChild(item);
+      });
+      summary.appendChild(list);
     }
   }
 
@@ -189,8 +243,8 @@ async function handleUpload(inputId, endpoint, label, preview = false) {
     row.className = "upload-box actual-stock-row";
     row.innerHTML = `
       <input type="text" class="actualItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)" value="${escapeHtmlAttr(itemType)}">
-      <input type="number" class="actualNag" placeholder="Actual NAG" min="0" step="1">
-      <input type="number" class="actualWeight" placeholder="Actual stock (kg)" min="0" step="0.01">
+      <input type="number" class="actualNag" placeholder="Actual NAG" min="0" step="1" value="0">
+      <input type="number" class="actualWeight" placeholder="Actual stock (kg)" min="0" step="0.01" value="0">
       <button type="button" class="row-remove-button" onclick="removeActualStockRow(this)">Remove</button>
     `;
     container.appendChild(row);

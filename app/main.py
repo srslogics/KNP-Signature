@@ -1625,6 +1625,15 @@ def stock_item_names_query(db: Session, scope=None):
     return items
 
 
+PROCESS_DAY_SOURCE_ITEMS = [
+    "BB",
+    "CB",
+    "COCREL",
+    "LEGOAN",
+    "DP"
+]
+
+
 def format_sheet_row(label, weight=0, rate=0, amount=0, nag=None):
     return {
         "goods": label,
@@ -3318,16 +3327,17 @@ def process_day_items(input_date: str, actual_stock: list[dict], db: Session = D
             "actual_quantity": actual_quantity
         }
 
-    expected_items = set(stock_item_names_query(db, {"mode": "single", "outlet_id": current_outlet.id, "outlet": current_outlet}))
-
-    missing_items = sorted(item for item in expected_items if item not in normalized_actuals)
-    if missing_items:
-        return {"error": f"Enter actual stock for all tracked hen types. Missing: {', '.join(missing_items[:8])}"}
+    expected_items = list(PROCESS_DAY_SOURCE_ITEMS)
+    for item in expected_items:
+        normalized_actuals.setdefault(item, {
+            "actual_weight": Decimal("0"),
+            "actual_quantity": Decimal("0")
+        })
 
     existing = db.query(models.DailyItemStock).filter(
         models.DailyItemStock.outlet_id == current_outlet.id,
         models.DailyItemStock.date == target_date,
-        models.DailyItemStock.item_type.in_(list(normalized_actuals.keys()))
+        models.DailyItemStock.item_type.in_(expected_items)
     ).first()
     if existing:
         return {"error": "One or more hen types already processed for this day"}
@@ -6344,7 +6354,7 @@ def tracked_items(db: Session = Depends(get_db), scope=Depends(get_outlet_scope)
     if scope["mode"] == "all":
         return {"error": "Select one outlet for tracked items", "items": []}
 
-    return {"items": sorted(stock_item_names_query(db, scope))}
+    return {"items": PROCESS_DAY_SOURCE_ITEMS}
 
 
 @app.get("/analytics/profit-by-item")

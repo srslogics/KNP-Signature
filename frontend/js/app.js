@@ -639,6 +639,7 @@ function loadPage(page) {
               <button onclick="addActualStockRow()">Add Hen Type</button>
               <button onclick="processDay()">Process</button>
             </div>
+            <div id="processDaySummary" class="notice upload-status" style="display:none;"></div>
           </div>
 
           <div class="section">
