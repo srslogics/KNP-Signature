@@ -598,18 +598,31 @@ def get_current_outlet(scope=Depends(get_outlet_scope)):
     return outlet
 
 
+def resolve_scope_outlet_id(scope):
+    selected = scope.get("selected")
+    if selected:
+        return selected.id
+    outlet = scope.get("outlet")
+    if outlet:
+        return outlet.id
+    outlet_id = scope.get("outlet_id")
+    if outlet_id:
+        return outlet_id
+    raise KeyError("selected")
+
+
 def apply_outlet_scope(query, model, scope):
     if scope["mode"] == "all":
         outlet_ids = [outlet.id for outlet in scope["outlets"]]
         return query.filter(model.outlet_id.in_(outlet_ids))
-    return query.filter(model.outlet_id == scope["selected"].id)
+    return query.filter(model.outlet_id == resolve_scope_outlet_id(scope))
 
 
 def outlet_scope_filter(model, scope):
     if scope["mode"] == "all":
         outlet_ids = [outlet.id for outlet in scope["outlets"]]
         return model.outlet_id.in_(outlet_ids)
-    return model.outlet_id == scope["selected"].id
+    return model.outlet_id == resolve_scope_outlet_id(scope)
 
 
 ensure_database_schema()
