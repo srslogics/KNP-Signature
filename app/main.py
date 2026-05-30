@@ -3305,43 +3305,7 @@ def process_day_items(input_date: str, actual_stock: list[dict], db: Session = D
             "actual_quantity": actual_quantity
         }
 
-    expected_items = set()
-    latest_previous_stock = {}
-    for row in db.query(models.DailyItemStock).filter(
-        models.DailyItemStock.outlet_id == current_outlet.id,
-        models.DailyItemStock.date < target_date
-    ).order_by(
-        models.DailyItemStock.item_type.asc(),
-        models.DailyItemStock.date.desc()
-    ).all():
-        latest_previous_stock.setdefault(row.item_type, row)
-
-    for item_type, row in latest_previous_stock.items():
-        if Decimal(row.actual_closing_weight or 0) > 0 or Decimal(row.actual_closing_quantity or 0) > 0:
-            expected_items.add(item_type)
-
-    latest_openings = {}
-    for row in db.query(models.ItemOpeningStock).filter(
-        models.ItemOpeningStock.outlet_id == current_outlet.id,
-        models.ItemOpeningStock.date <= target_date
-    ).order_by(
-        models.ItemOpeningStock.item_type.asc(),
-        models.ItemOpeningStock.date.desc()
-    ).all():
-        latest_openings.setdefault(row.item_type, row)
-
-    for item_type, row in latest_openings.items():
-        if Decimal(row.opening_weight or 0) > 0 or Decimal(row.opening_quantity or 0) > 0:
-            expected_items.add(item_type)
-
-    for row in db.query(models.Transaction.item_type).filter(
-        models.Transaction.outlet_id == current_outlet.id,
-        models.Transaction.date == target_date,
-        models.Transaction.type.in_(["PURCHASE", "SALE"]),
-        models.Transaction.item_type.isnot(None)
-    ).distinct().all():
-        if row.item_type:
-            expected_items.add(row.item_type)
+    expected_items = set(stock_item_names_query(db, {"mode": "single", "outlet_id": current_outlet.id, "outlet": current_outlet}))
 
     missing_items = sorted(item for item in expected_items if item not in normalized_actuals)
     if missing_items:
@@ -5631,51 +5595,43 @@ def daily_sheet(
     ).all()
     processed_by_item = {row.item_type: row for row in processed_rows}
 
+    tracked_items = sorted(stock_item_names_query(db, scope))
     opening_source = {}
     previous_date = target_date - timedelta(days=1)
+
+    # First choice: exact previous day's actual closing from Process Day.
     previous_day_rows = apply_outlet_scope(
         db.query(models.DailyItemStock).filter(models.DailyItemStock.date == previous_date),
         models.DailyItemStock,
         scope
     ).all()
-    if previous_day_rows:
-        for row in previous_day_rows:
-            opening_source[row.item_type] = {
-                "nag": Decimal(row.actual_closing_quantity or 0) if row.actual_closing_quantity is not None else None,
-                "weight": Decimal(row.actual_closing_weight or 0)
-            }
-
-    latest_previous_rows = apply_outlet_scope(
-        db.query(models.DailyItemStock).filter(models.DailyItemStock.date < target_date),
-        models.DailyItemStock,
-        scope
-    ).order_by(
-        models.DailyItemStock.item_type.asc(),
-        models.DailyItemStock.date.desc()
-    ).all()
-    for row in latest_previous_rows:
-        opening_source.setdefault(row.item_type, {
+    for row in previous_day_rows:
+        opening_source[row.item_type] = {
             "nag": Decimal(row.actual_closing_quantity or 0) if row.actual_closing_quantity is not None else None,
             "weight": Decimal(row.actual_closing_weight or 0)
+        }
+
+    # If the day itself is already processed, keep its stored opening only for
+    # rendering that processed day back again. This should match the previous
+    # day's actual closing that was used during Process Day.
+    for row in processed_rows:
+        opening_source.setdefault(row.item_type, {
+            "nag": Decimal(row.opening_quantity or 0) if row.opening_quantity is not None else None,
+            "weight": Decimal(row.opening_weight or 0)
         })
 
-    if processed_rows:
-        for row in processed_rows:
-            opening_source.setdefault(row.item_type, {
-                "nag": Decimal(row.opening_quantity or 0) if row.opening_quantity is not None else None,
-                "weight": Decimal(row.opening_weight or 0)
-            })
+    if not processed_rows:
+        if not previous_day_rows:
+            return {
+                "error": f"Process Day for {previous_date.strftime('%d/%m/%Y')} before loading this stock sheet."
+            }
 
-    if not opening_source:
-        for row in apply_outlet_scope(
-            db.query(models.ItemOpeningStock).filter(models.ItemOpeningStock.date <= target_date),
-            models.ItemOpeningStock,
-            scope
-        ).order_by(models.ItemOpeningStock.date.desc()).all():
-            opening_source.setdefault(row.item_type, {
-                "nag": Decimal(row.opening_quantity or 0) if row.opening_quantity is not None else None,
-                "weight": Decimal(row.opening_weight or 0)
-            })
+        missing_previous_day_items = [item for item in tracked_items if item not in opening_source]
+        if missing_previous_day_items:
+            return {
+                "error": "Previous day Process Day is incomplete. Missing: "
+                + ", ".join(missing_previous_day_items[:8])
+            }
 
     opening_rows = []
     opening_total_quantity = None
