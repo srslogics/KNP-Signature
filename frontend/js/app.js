@@ -1260,6 +1260,14 @@ function loadPage(page) {
                     <option value="STANDARD">Regular</option>
                     <option value="DRESSED">Dressed</option>
                   </select>
+                  <select id="shortcutSourceItemType">
+                    <option value="">Source Type</option>
+                    <option value="BB">BB</option>
+                    <option value="CB">CB</option>
+                    <option value="COCREL">COCREL</option>
+                    <option value="LEGOAN">LEGOAN</option>
+                    <option value="DP">DP</option>
+                  </select>
                   <select id="shortcutUnit">
                     <option value="KGS">KGS</option>
                     <option value="PCS">PCS</option>

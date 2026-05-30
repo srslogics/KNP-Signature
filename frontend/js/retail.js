@@ -876,6 +876,7 @@ function cancelRetailShortcutEdit() {
   const rateInput = document.getElementById("shortcutRate");
   const unitInput = document.getElementById("shortcutUnit");
   const lineTypeInput = document.getElementById("shortcutLineType");
+  const sourceTypeInput = document.getElementById("shortcutSourceItemType");
   const saveButton = document.getElementById("saveShortcutButton");
   const cancelButton = document.getElementById("cancelShortcutEditButton");
 
@@ -883,6 +884,7 @@ function cancelRetailShortcutEdit() {
   if (nameInput) nameInput.value = "";
   if (rateInput) rateInput.value = "";
   if (lineTypeInput) lineTypeInput.value = retailBillingMode === "dressed" ? "DRESSED" : "STANDARD";
+  if (sourceTypeInput) sourceTypeInput.value = "";
   if (unitInput) {
     unitInput.value = "KGS";
     unitInput.style.display = retailBillingMode === "dressed" ? "none" : "";
@@ -897,6 +899,7 @@ function startRetailShortcutEdit(shortcut) {
   const rateInput = document.getElementById("shortcutRate");
   const unitInput = document.getElementById("shortcutUnit");
   const lineTypeInput = document.getElementById("shortcutLineType");
+  const sourceTypeInput = document.getElementById("shortcutSourceItemType");
   const saveButton = document.getElementById("saveShortcutButton");
   const cancelButton = document.getElementById("cancelShortcutEditButton");
 
@@ -904,6 +907,7 @@ function startRetailShortcutEdit(shortcut) {
   if (nameInput) nameInput.value = shortcut.name || "";
   if (rateInput) rateInput.value = Number(shortcut.rate || 0) > 0 ? Number(shortcut.rate).toFixed(2) : "";
   if (lineTypeInput) lineTypeInput.value = (shortcut.line_type || "STANDARD").toUpperCase();
+  if (sourceTypeInput) sourceTypeInput.value = shortcut.source_item_type || "";
   if (unitInput) {
     unitInput.value = shortcut.unit || "KGS";
     unitInput.style.display = (shortcut.line_type || "STANDARD").toUpperCase() === "DRESSED" ? "none" : "";
@@ -920,6 +924,7 @@ async function saveRetailShortcut() {
     ? "DRESSED"
     : (document.getElementById("shortcutLineType")?.value || "STANDARD");
   const rate = Number(document.getElementById("shortcutRate")?.value || 0);
+  const sourceItemType = document.getElementById("shortcutSourceItemType")?.value || "";
   const unit = lineType === "DRESSED" ? "KGS" : (document.getElementById("shortcutUnit")?.value || "KGS");
 
   if (!name) {
@@ -935,6 +940,7 @@ async function saveRetailShortcut() {
       name,
       rate,
       line_type: lineType,
+      source_item_type: sourceItemType,
       unit
     }),
     { "Content-Type": "application/json" }
@@ -977,8 +983,8 @@ function renderShortcutManagerList() {
     chip.className = "retail-shortcut-chip retail-shortcut-chip-managed";
     const text = document.createElement("span");
     text.innerText = activeLineType === "DRESSED"
-      ? `${shortcut.name} | DRESSED | Rs ${Number(shortcut.rate || 0).toFixed(2)}`
-      : `${shortcut.name} | ${shortcut.line_type || "STANDARD"} | ${shortcut.unit || "KGS"} | Rs ${Number(shortcut.rate || 0).toFixed(2)}`;
+      ? `${shortcut.name} | ${shortcut.source_item_type || "-"} | DRESSED | Rs ${Number(shortcut.rate || 0).toFixed(2)}`
+      : `${shortcut.name} | ${shortcut.source_item_type || "-"} | ${shortcut.line_type || "STANDARD"} | ${shortcut.unit || "KGS"} | Rs ${Number(shortcut.rate || 0).toFixed(2)}`;
     const actions = document.createElement("div");
     actions.className = "retail-shortcut-managed-actions";
     const editButton = document.createElement("button");
@@ -1045,6 +1051,7 @@ function addRetailItemRow(item = null, defaultLineType = "STANDARD") {
   const row = document.createElement("div");
   row.className = "retail-item-row";
   row.dataset.lineType = lineType;
+  row.dataset.sourceItemType = item?.source_item_type || "";
   row.innerHTML = `
     <input type="text" class="retailItemName" placeholder="Item name" list="retailItemSuggestions" autocomplete="off" oninput="suggestRetailItems(this); recalcRetailLine(this)">
     <input type="number" class="retailQty" placeholder="NAG" min="0" step="1" oninput="recalcRetailLine(this)">
@@ -1093,6 +1100,7 @@ function addShortcutRetailItem(shortcut) {
 
   itemInput.value = shortcut.name;
   targetRow.dataset.lineType = lineType;
+  targetRow.dataset.sourceItemType = shortcut.source_item_type || "";
   unitSelect.value = shortcut.unit || "KGS";
   if (lineType !== "DRESSED" && !qtyInput.value && unitSelect.value === "PCS") {
     qtyInput.value = "1";
@@ -1219,6 +1227,7 @@ function applyRetailDefaults(row) {
 
   const shortcut = getRetailShortcutByName(itemName);
   if (shortcut) {
+    row.dataset.sourceItemType = shortcut.source_item_type || "";
     if (lineType !== "DRESSED" && (!unitInput.value || unitInput.value === "KGS")) {
       unitInput.value = shortcut.unit || unitInput.value || "KGS";
     }
@@ -1241,6 +1250,7 @@ function collectRetailItemsFromForm(mode = retailBillingMode) {
       return {
         item_name: row.querySelector(".retailItemName")?.value.trim(),
         line_type: lineType,
+        source_item_type: row.dataset.sourceItemType || "",
         nag: quantity,
         quantity,
         unit: lineType === "DRESSED" ? "KGS" : (row.querySelector(".retailUnit")?.value || "KGS"),

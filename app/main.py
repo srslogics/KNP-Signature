@@ -180,6 +180,7 @@ def ensure_database_schema():
         conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS bill_number VARCHAR"))
         conn.execute(text("UPDATE transactions SET source_ref = '' WHERE source_ref IS NULL"))
         conn.execute(text("ALTER TABLE retail_bill_items ADD COLUMN IF NOT EXISTS line_type VARCHAR NOT NULL DEFAULT 'STANDARD'"))
+        conn.execute(text("ALTER TABLE retail_bill_items ADD COLUMN IF NOT EXISTS source_item_type VARCHAR"))
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
                 id UUID PRIMARY KEY,
@@ -227,6 +228,7 @@ def ensure_database_schema():
                 name VARCHAR NOT NULL,
                 normalized_name VARCHAR NOT NULL,
                 line_type VARCHAR NOT NULL DEFAULT 'STANDARD',
+                source_item_type VARCHAR,
                 unit VARCHAR NOT NULL DEFAULT 'KGS',
                 rate NUMERIC,
                 created_at TIMESTAMP DEFAULT now(),
@@ -234,6 +236,7 @@ def ensure_database_schema():
                 CONSTRAINT unique_retail_shortcut_per_outlet UNIQUE (outlet_id, normalized_name, line_type)
             )
         """))
+        conn.execute(text("ALTER TABLE retail_shortcuts ADD COLUMN IF NOT EXISTS source_item_type VARCHAR"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions (token)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions (user_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_document_number_counters_outlet_date ON document_number_counters (outlet_id, target_date)"))
@@ -834,6 +837,7 @@ def list_retail_shortcuts(
                 "name": row.name or "",
                 "rate": float(row.rate or 0),
                 "line_type": row.line_type or "STANDARD",
+                "source_item_type": row.source_item_type or "",
                 "unit": row.unit or "KGS"
             }
             for row in rows
@@ -850,6 +854,7 @@ def save_retail_shortcut(
     shortcut_id_raw = str(payload.get("id") or "").strip()
     name = str(payload.get("name") or "").strip()
     line_type = str(payload.get("line_type") or "STANDARD").strip().upper() or "STANDARD"
+    source_item_type = resolve_stock_source_type(name, payload.get("source_item_type") or "")
     unit = "KGS" if line_type == "DRESSED" else (str(payload.get("unit") or "KGS").strip().upper() or "KGS")
     rate = Decimal(str(payload.get("rate") or 0))
 
@@ -887,6 +892,7 @@ def save_retail_shortcut(
             name=name,
             normalized_name=normalized_name,
             line_type=line_type,
+            source_item_type=source_item_type or None,
             unit=unit,
             rate=rate
         )
@@ -895,6 +901,7 @@ def save_retail_shortcut(
         shortcut.name = name
         shortcut.normalized_name = normalized_name
         shortcut.line_type = line_type
+        shortcut.source_item_type = source_item_type or None
         shortcut.unit = unit
         shortcut.rate = rate
 
@@ -912,6 +919,7 @@ def save_retail_shortcut(
             "name": shortcut.name or "",
             "rate": float(shortcut.rate or 0),
             "line_type": shortcut.line_type or "STANDARD",
+            "source_item_type": shortcut.source_item_type or "",
             "unit": shortcut.unit or "KGS"
         }
     }
@@ -1633,6 +1641,45 @@ PROCESS_DAY_SOURCE_ITEMS = [
     "DP"
 ]
 
+RETAIL_SOURCE_TYPE_ALIASES = {
+    "BB": "BB",
+    "BB HOTEL": "BB",
+    "BB SHOP": "BB",
+    "BB WHOLESALE": "BB",
+    "BB DRESS": "BB",
+    "BONE": "BB",
+    "BONELESS": "BB",
+    "DRESS": "BB",
+    "LEG PIC": "BB",
+    "LEG THAI": "BB",
+    "THAI BONELESS": "BB",
+    "WINGS": "BB",
+    "CB": "CB",
+    "CB HOTEL": "CB",
+    "CB SHOP": "CB",
+    "CB WHOLESALE": "CB",
+    "COCREL": "COCREL",
+    "LEGOAN": "LEGOAN",
+    "DP": "DP",
+}
+
+
+def normalize_stock_source_key(value):
+    return " ".join(str(value or "").strip().upper().split())
+
+
+def resolve_stock_source_type(item_name="", source_item_type=""):
+    explicit = normalize_stock_source_key(source_item_type)
+    if explicit in PROCESS_DAY_SOURCE_ITEMS:
+        return explicit
+
+    normalized_item = normalize_stock_source_key(item_name)
+    mapped = RETAIL_SOURCE_TYPE_ALIASES.get(normalized_item)
+    if mapped:
+        return mapped
+
+    return explicit or normalized_item or ""
+
 
 def format_sheet_row(label, weight=0, rate=0, amount=0, nag=None):
     return {
@@ -1776,6 +1823,7 @@ def serialize_retail_bill(bill, items):
                 "line_order": item.line_order,
                 "item_name": item.item_name,
                 "line_type": (item.line_type or "STANDARD").upper(),
+                "source_item_type": item.source_item_type or "",
                 "nag": float(item.quantity or 0),
                 "quantity": float(item.quantity or 0),
                 "unit": item.unit or "KGS",
@@ -3478,16 +3526,34 @@ def process_day_items(input_date: str, actual_stock: list[dict], db: Session = D
         db.rollback()
         return {"error": "Processing failed", "details": str(e)}
 
+    sheet_payload = daily_sheet(
+        date=str(target_date),
+        sheet_type="stock",
+        db=db,
+        user=None,
+        scope={
+            "mode": "single",
+            "selected": current_outlet,
+            "outlet": current_outlet,
+            "outlet_id": current_outlet.id,
+        }
+    )
+
+    final_stock = sheet_payload.get("final_stock", {}) if isinstance(sheet_payload, dict) else {}
+    closing_total = final_stock.get("closing_stock", {}) if isinstance(final_stock, dict) else {}
+    actual_total = final_stock.get("actual_stock", {}) if isinstance(final_stock, dict) else {}
+    short_total = final_stock.get("short_by", {}) if isinstance(final_stock, dict) else {}
+
     return {
         "status": "success",
         "date": str(target_date),
         "items": results,
-        "total_expected_nag": float(optional_decimal_sum(row["expected_nag"] for row in results) or 0),
-        "total_expected_stock": sum(row["expected_stock"] for row in results),
-        "total_actual_nag": float(optional_decimal_sum(row["actual_nag"] for row in results) or 0),
-        "total_actual_stock": sum(row["actual_stock"] for row in results),
-        "total_quantity_leakage": float(optional_decimal_sum(row["quantity_leakage"] for row in results) or 0),
-        "total_leakage": sum(row["leakage"] for row in results)
+        "total_expected_nag": float(closing_total.get("nag") or 0),
+        "total_expected_stock": float(closing_total.get("weight") or 0),
+        "total_actual_nag": float(actual_total.get("nag") or 0),
+        "total_actual_stock": float(actual_total.get("weight") or 0),
+        "total_quantity_leakage": float(short_total.get("nag") or 0),
+        "total_leakage": float(short_total.get("weight") or 0)
     }
 
 
@@ -5070,6 +5136,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db),
         line_type = str(raw_item.get("line_type") or "STANDARD").strip().upper()
         if line_type not in ["STANDARD", "DRESSED"]:
             line_type = "STANDARD"
+        source_item_type = resolve_stock_source_type(item_name, raw_item.get("source_item_type") or "")
         quantity = parse_decimal(raw_item.get("nag", raw_item.get("quantity")))
         rate = parse_decimal(raw_item.get("rate"))
         unit = str(raw_item.get("unit") or "KGS").strip().upper()
@@ -5102,6 +5169,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db),
             "line_order": index,
             "item_name": item_name,
             "line_type": line_type,
+            "source_item_type": source_item_type,
             "quantity": quantity,
             "unit": unit,
             "weight": weight,
@@ -5164,6 +5232,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db),
             line_order=item["line_order"],
             item_name=item["item_name"],
             line_type=item["line_type"],
+            source_item_type=item["source_item_type"] or None,
             quantity=item["quantity"],
             unit=item["unit"],
             weight=item["weight"],
@@ -5177,7 +5246,7 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db),
             party_id=transaction_party_id,
             type="SALE",
             category=transaction_category,
-            item_type=item["item_name"],
+            item_type=item["source_item_type"] or item["item_name"],
             quantity=item["quantity"],
             weight=item["weight"],
             rate=item["rate"],
@@ -5301,6 +5370,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
         line_type = str(raw_item.get("line_type") or "STANDARD").strip().upper()
         if line_type not in ["STANDARD", "DRESSED"]:
             line_type = "STANDARD"
+        source_item_type = resolve_stock_source_type(item_name, raw_item.get("source_item_type") or "")
         quantity = parse_decimal(raw_item.get("nag", raw_item.get("quantity")))
         rate = parse_decimal(raw_item.get("rate"))
         unit = str(raw_item.get("unit") or "KGS").strip().upper()
@@ -5333,6 +5403,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
             "line_order": index,
             "item_name": item_name,
             "line_type": line_type,
+            "source_item_type": source_item_type,
             "quantity": quantity,
             "unit": unit,
             "weight": weight,
@@ -5403,6 +5474,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
             line_order=item["line_order"],
             item_name=item["item_name"],
             line_type=item["line_type"],
+            source_item_type=item["source_item_type"] or None,
             quantity=item["quantity"],
             unit=item["unit"],
             weight=item["weight"],
@@ -5416,7 +5488,7 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
             party_id=transaction_party_id,
             type="SALE",
             category=transaction_category,
-            item_type=item["item_name"],
+            item_type=item["source_item_type"] or item["item_name"],
             quantity=item["quantity"],
             weight=item["weight"],
             rate=item["rate"],
