@@ -1902,6 +1902,28 @@ input[type="file"] {
   font-size: 10px;
 }
 
+.thermal-payment-qr {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #8c98a8;
+  text-align: center;
+}
+
+.thermal-payment-qr strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.thermal-payment-qr img {
+  display: block;
+  width: 180px;
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: 6px;
+}
+
 .thermal-footer {
   margin-top: 10px;
   padding-top: 8px;

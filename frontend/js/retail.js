@@ -5,6 +5,11 @@ const RETAIL_SHOP_PROFILE = {
   phone: "9371291195 / 7972329562"
 };
 
+const RETAIL_PAYMENT_QR_VIEW = {
+  label: "Scan & Pay",
+  imageSrc: "assets/payment-qr.jpeg"
+};
+
 const RETAIL_PENDING_STORAGE_KEY = "stockpilot.retail.pending";
 const LOCAL_PRINT_BRIDGE_URL = localStorage.getItem("stockpilot.printBridgeUrl") || "http://127.0.0.1:9876";
 
@@ -2502,6 +2507,9 @@ function getThermalReceiptShareStyles() {
     .thermal-section-row td { padding-top: 5px; font-weight: 700; border-top: 1px dashed #a8adb7; }
     .thermal-total { margin-top: 4px; padding-top: 4px; border-top: 1px dashed #8c98a8; font-weight: 800; }
     .thermal-notes { padding-top: 6px; font-size: 10px; }
+    .thermal-payment-qr { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #8c98a8; text-align: center; }
+    .thermal-payment-qr strong { display: block; margin-bottom: 6px; font-size: 11px; letter-spacing: 0.04em; }
+    .thermal-payment-qr img { display: block; width: 180px; max-width: 100%; margin: 0 auto; border-radius: 6px; }
     .thermal-footer { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #8c98a8; text-align: center; }
     .thermal-footer p { margin: 1px 0; font-size: 11px; }
   `;
@@ -2731,6 +2739,10 @@ function getRetailReceiptMarkup(bill) {
 
       ${bill.requires_customer && !bill.customer_name ? `<div class="thermal-notes">Known customer name is required when this bill has credit outstanding.</div>` : ""}
       ${bill.notes ? `<div class="thermal-notes">${escapeHtml(bill.notes)}</div>` : ""}
+      <div class="thermal-payment-qr">
+        <strong>${escapeHtml(RETAIL_PAYMENT_QR_VIEW.label)}</strong>
+        <img src="${escapeHtml(RETAIL_PAYMENT_QR_VIEW.imageSrc)}" alt="Payment QR">
+      </div>
 
       <div class="thermal-footer">
         <p>Created By: ${escapeHtml(bill.cashier_name || "admin")}</p>

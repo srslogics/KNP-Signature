@@ -5645,6 +5645,20 @@ def daily_sheet(
                 "weight": Decimal(row.actual_closing_weight or 0)
             }
 
+    latest_previous_rows = apply_outlet_scope(
+        db.query(models.DailyItemStock).filter(models.DailyItemStock.date < target_date),
+        models.DailyItemStock,
+        scope
+    ).order_by(
+        models.DailyItemStock.item_type.asc(),
+        models.DailyItemStock.date.desc()
+    ).all()
+    for row in latest_previous_rows:
+        opening_source.setdefault(row.item_type, {
+            "nag": Decimal(row.actual_closing_quantity or 0) if row.actual_closing_quantity is not None else None,
+            "weight": Decimal(row.actual_closing_weight or 0)
+        })
+
     if processed_rows:
         for row in processed_rows:
             opening_source.setdefault(row.item_type, {
