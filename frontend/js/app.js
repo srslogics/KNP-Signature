@@ -157,7 +157,7 @@ function updateAuthUi() {
   }
 
   if (dailySheetMenu) {
-    dailySheetMenu.style.display = isOwner() ? "" : "none";
+    dailySheetMenu.style.display = currentUser ? "" : "none";
   }
 
   if (accessControlMenu) {
@@ -491,10 +491,6 @@ function loadPage(page) {
       return;
     }
     const selectedOutlet = normalizeSelectedOutletId(page);
-    if (page === "daily-sheet" && !isOwner()) {
-      showToast("Daily Sheet is only for owner");
-      return;
-    }
     if (page === "access-control" && !isOwner()) {
       showToast("Access Control is only for owner");
       return;

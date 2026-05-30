@@ -5480,7 +5480,7 @@ def daily_sheet(
     date: str,
     sheet_type: str = "stock",
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_owner),
+    user: models.User = Depends(get_current_user),
     scope=Depends(get_outlet_scope)
 ):
     if scope["mode"] == "all":
@@ -6219,7 +6219,7 @@ def export_daily_sheet(
     date: str,
     sheet_type: str = "stock",
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_owner),
+    user: models.User = Depends(get_current_user),
     scope=Depends(get_outlet_scope)
 ):
     sheet_payload = daily_sheet(date=date, sheet_type=sheet_type, db=db, user=user, scope=scope)
