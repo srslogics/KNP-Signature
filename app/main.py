@@ -1581,13 +1581,13 @@ def latest_item_rates(db: Session, target_date, scope=None):
 
 
 def stock_item_names_query(db: Session, scope=None):
-    sale_purchase_query = db.query(models.Transaction.item_type).filter(
+    purchase_query = db.query(models.Transaction.item_type).filter(
         models.Transaction.item_type.isnot(None),
-        models.Transaction.type.in_(["PURCHASE", "SALE"])
+        models.Transaction.type == "PURCHASE"
     )
     if scope:
-        sale_purchase_query = apply_outlet_scope(sale_purchase_query, models.Transaction, scope)
-    sale_purchase_items = sale_purchase_query.distinct().all()
+        purchase_query = apply_outlet_scope(purchase_query, models.Transaction, scope)
+    purchase_items = purchase_query.distinct().all()
 
     opening_query = db.query(models.ItemOpeningStock.item_type)
     if scope:
@@ -1600,7 +1600,7 @@ def stock_item_names_query(db: Session, scope=None):
     processed_items = processed_query.distinct().all()
 
     items = set()
-    for row in sale_purchase_items:
+    for row in purchase_items:
         if row.item_type:
             items.add(row.item_type)
     for row in opening_items:

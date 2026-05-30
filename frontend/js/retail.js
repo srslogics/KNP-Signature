@@ -7,7 +7,7 @@ const RETAIL_SHOP_PROFILE = {
 
 const RETAIL_PAYMENT_QR_VIEW = {
   label: "Scan & Pay",
-  imageSrc: "assets/payment-qr.jpeg",
+  imageSrc: "assets/payment-qr.png",
   upiId: "soney.1105-1@okicici"
 };
 
@@ -2510,8 +2510,8 @@ function getThermalReceiptShareStyles() {
     .thermal-notes { padding-top: 6px; font-size: 10px; }
     .thermal-payment-qr { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #8c98a8; text-align: center; }
     .thermal-payment-qr strong { display: block; margin-bottom: 6px; font-size: 11px; letter-spacing: 0.04em; }
-    .thermal-payment-qr-frame { width: 158px; height: 158px; margin: 0 auto; overflow: hidden; border: 1px solid #d6dce6; border-radius: 8px; background: #fff; }
-    .thermal-payment-qr img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center 49%; }
+    .thermal-payment-qr-frame { width: 146px; height: 146px; margin: 0 auto; overflow: hidden; border: 1px solid #d6dce6; border-radius: 4px; background: #fff; padding: 6px; box-sizing: border-box; }
+    .thermal-payment-qr img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; image-rendering: crisp-edges; }
     .thermal-payment-qr-id { margin: 6px 0 0; font-size: 9px; font-weight: 700; letter-spacing: 0.02em; word-break: break-all; }
     .thermal-footer { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #8c98a8; text-align: center; }
     .thermal-footer p { margin: 1px 0; font-size: 11px; }
