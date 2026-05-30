@@ -6021,14 +6021,16 @@ def daily_sheet(
             scope
         ).scalar() or 0
     )
-    dressed_avg_on_live_weight = decimal_ratio(dressed_sales_amount, dressed_live_cut_weight)
-    dressed_yield_percent = (dressed_yield_weight / dressed_live_cut_weight * Decimal("100")) if dressed_live_cut_weight > 0 else Decimal("0")
+    dressed_avg_on_live_weight = decimal_ratio(dressed_sales_amount, dressed_live_cut_weight) if dressed_live_cut_weight > 0 else None
+    dressed_yield_percent = (dressed_yield_weight / dressed_live_cut_weight * Decimal("100")) if dressed_live_cut_weight > 0 else None
     sell_through = (total_sales_weight / (opening_total_weight + purchase_total_weight) * Decimal("100")) if (opening_total_weight + purchase_total_weight) > 0 else Decimal("0")
-    leakage_percent = (short_weight / closing_weight * Decimal("100")) if closing_weight > 0 else Decimal("0")
+    leakage_percent = (short_weight / closing_weight * Decimal("100")) if closing_weight > 0 and short_weight >= 0 else None
     realized_spread = total_sales_rate_value - total_purchase_rate_value
     retail_total_amount = sum(Decimal(str(section["total"]["total"])) for section in ordered_sales_sections if section["title"].upper() in ["RETAIL", "RETAIL DRESSED"])
     retail_mix_percent = (retail_total_amount / total_sales_amount * Decimal("100")) if total_sales_amount > 0 else Decimal("0")
-    stock_coverage_days = (closing_weight / total_sales_weight) if total_sales_weight > 0 else Decimal("0")
+    stock_coverage_days = (closing_weight / total_sales_weight) if total_sales_weight > 0 and closing_weight >= 0 else None
+    stock_math_invalid = closing_weight < 0
+    missing_dressed_live_cut = dressed_sales_weight > 0 and dressed_live_cut_weight <= 0
 
     return {
         "date": str(target_date),
@@ -6119,7 +6121,7 @@ def daily_sheet(
                 "label": "Expected Closing",
                 "value": float(closing_weight),
                 "suffix": " kg",
-                "subvalue": closing_quantity is not None and f"{float(closing_quantity):.0f} NAG" or None
+                "subvalue": "Sales exceed available stock" if stock_math_invalid else (closing_quantity is not None and f"{float(closing_quantity):.0f} NAG" or None)
             },
             {
                 "label": "Actual Stock",
@@ -6131,7 +6133,7 @@ def daily_sheet(
                 "label": "Short By",
                 "value": float(short_weight),
                 "suffix": " kg",
-                "subvalue": short_quantity is not None and f"{float(short_quantity):.0f} NAG" or None
+                "subvalue": "Invalid until stock source is corrected" if stock_math_invalid else (short_quantity is not None and f"{float(short_quantity):.0f} NAG" or None)
             },
             {
                 "label": "Avg Buy Rate",
@@ -6145,8 +6147,10 @@ def daily_sheet(
             },
             {
                 "label": "Leakage %",
-                "value": float(leakage_percent),
-                "suffix": "%"
+                "value": float(leakage_percent) if leakage_percent is not None else None,
+                "suffix": "%",
+                "display_value": "N/A" if leakage_percent is None else None,
+                "subvalue": stock_math_invalid and "Expected closing is negative" or None
             },
             {
                 "label": "Sell Through",
@@ -6176,14 +6180,17 @@ def daily_sheet(
             },
             {
                 "label": "Dressed Avg",
-                "value": float(dressed_avg_on_live_weight),
+                "value": float(dressed_avg_on_live_weight) if dressed_avg_on_live_weight is not None else None,
                 "suffix": "/live kg",
-                "subvalue": f"Live cut {float(dressed_live_cut_weight):.3f} kg" if dressed_live_cut_weight > 0 else None
+                "display_value": "N/A" if dressed_avg_on_live_weight is None else None,
+                "subvalue": missing_dressed_live_cut and "Live cut weight missing" or (f"Live cut {float(dressed_live_cut_weight):.3f} kg" if dressed_live_cut_weight > 0 else None)
             },
             {
                 "label": "Stock Cover",
-                "value": float(stock_coverage_days),
-                "suffix": " days"
+                "value": float(stock_coverage_days) if stock_coverage_days is not None else None,
+                "suffix": " days",
+                "display_value": "N/A" if stock_coverage_days is None else None,
+                "subvalue": stock_math_invalid and "Closing stock is negative" or None
             },
             {
                 "label": "Gross Profit",
@@ -6199,8 +6206,9 @@ def daily_sheet(
                 "dressed_weight_prepared": float(dressed_yield_weight),
                 "dressed_weight_sold": float(dressed_sales_weight),
                 "dressed_sales_amount": float(dressed_sales_amount),
-                "avg_amount_per_live_kg": float(dressed_avg_on_live_weight),
-                "yield_percent": float(dressed_yield_percent)
+                "avg_amount_per_live_kg": float(dressed_avg_on_live_weight) if dressed_avg_on_live_weight is not None else None,
+                "yield_percent": float(dressed_yield_percent) if dressed_yield_percent is not None else None,
+                "warning": "Live cut weight missing for dressed entries." if missing_dressed_live_cut else None
             }
         }
     }

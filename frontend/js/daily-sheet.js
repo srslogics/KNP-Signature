@@ -278,8 +278,8 @@ function createDressedCuttingSummarySection(summary) {
         <td>${formatNumber(summary.dressed_weight_prepared)} kg</td>
         <td>${formatNumber(summary.dressed_weight_sold)} kg</td>
         <td>${formatMoneyCompact(summary.dressed_sales_amount)}</td>
-        <td>${formatMoneyCompact(summary.avg_amount_per_live_kg)}</td>
-        <td>${formatNumber(summary.yield_percent)}%</td>
+        <td>${formatMetricDisplay(summary.avg_amount_per_live_kg, "", true)}</td>
+        <td>${formatMetricDisplay(summary.yield_percent, "%")}</td>
       </tr>
     </tbody>
   `;
@@ -291,6 +291,13 @@ function createDressedCuttingSummarySection(summary) {
   note.className = "notice info";
   note.innerHTML = "<strong>Dressed Avg</strong> = total dressed sales amount for the day / total live kg cut for the day.";
   wrapper.appendChild(note);
+
+  if (summary.warning) {
+    const warning = document.createElement("div");
+    warning.className = "notice error";
+    warning.innerHTML = `<strong>${summary.warning}</strong>`;
+    wrapper.appendChild(warning);
+  }
 
   return wrapper;
 }
@@ -304,9 +311,10 @@ function createMetricCardStrip(cards) {
     metric.className = `dashboard-kpi-card daily-metric-card ${getDailyMetricTone(card.label)}`;
     const prefix = card.prefix || "";
     const suffix = card.suffix || "";
+    const displayValue = card.display_value ?? `${prefix}${formatNumber(card.value)}${suffix}`;
     metric.innerHTML = `
       <span>${card.label || ""}</span>
-      <h2>${prefix}${formatNumber(card.value)}${suffix}</h2>
+      <h2>${displayValue}</h2>
       ${card.subvalue ? `<p>${card.subvalue}</p>` : ""}
     `;
     wrapper.appendChild(metric);
@@ -757,6 +765,13 @@ function formatDisplayDate(date) {
 
 function formatNumber(value) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 3 });
+}
+
+function formatMetricDisplay(value, suffix = "", money = false) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "N/A";
+  }
+  return `${money ? formatMoneyCompact(value) : formatNumber(value)}${suffix}`;
 }
 
 function formatMoneyCompact(value) {
