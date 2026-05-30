@@ -526,7 +526,7 @@ function loadPage(page) {
       content.innerHTML = `
         <div class="container upload-page">
 
-          <div class="section upload-date-section section-full">
+          <div class="section upload-date-section upload-shell-section section-full">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
                 <h2>Working Date</h2>
@@ -541,7 +541,7 @@ function loadPage(page) {
           <datalist id="itemSuggestions"></datalist>
           <datalist id="manualPartySuggestions"></datalist>
 
-          <div class="section section-full">
+          <div class="section upload-shell-section section-full">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
                 <h2>Party Directory</h2>
@@ -567,7 +567,7 @@ function loadPage(page) {
             </div>
           </div>
 
-          <div class="section">
+          <div class="section upload-shell-section upload-entry-section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
                 <h2>Dealer Purchases</h2>
@@ -580,7 +580,7 @@ function loadPage(page) {
             </div>
           </div>
 
-          <div class="section">
+          <div class="section upload-shell-section upload-entry-section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
                 <h2>Vendor Sales</h2>
@@ -593,7 +593,7 @@ function loadPage(page) {
             </div>
           </div>
 
-          <div class="section">
+          <div class="section upload-shell-section upload-entry-section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
                 <h2>Payments</h2>
@@ -606,7 +606,7 @@ function loadPage(page) {
             </div>
           </div>
 
-          <div class="section">
+          <div class="section upload-shell-section upload-entry-section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
                 <h2>Shop Mortality</h2>
@@ -619,7 +619,7 @@ function loadPage(page) {
             </div>
           </div>
 
-          <div class="section section-full">
+          <div class="section upload-shell-section process-day-section section-full">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
                 <h2>Process Day</h2>
@@ -627,6 +627,12 @@ function loadPage(page) {
             </div>
             <div class="upload-box process-day-controls">
               <input type="date" id="processDate">
+            </div>
+            <div class="process-day-grid-head" aria-hidden="true">
+              <span>Hen Type</span>
+              <span>Actual NAG</span>
+              <span>Actual Stock (kg)</span>
+              <span>Action</span>
             </div>
             <div id="actualStockRows" class="stock-rows">
               <div class="upload-box actual-stock-row">
@@ -642,7 +648,7 @@ function loadPage(page) {
             <div id="processDaySummary" class="notice upload-status" style="display:none;"></div>
           </div>
 
-          <div class="section">
+          <div class="section upload-shell-section upload-entry-section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
                 <h2>Opening Balance</h2>
@@ -655,7 +661,7 @@ function loadPage(page) {
             </div>
           </div>
 
-          <div class="section">
+          <div class="section upload-shell-section upload-entry-section">
             <div class="section-head upload-section-head">
               <div class="upload-heading-block">
                 <h2>Opening Stock</h2>
@@ -700,7 +706,7 @@ function loadPage(page) {
       title.innerText = "Business Dashboard";
 
       content.innerHTML = `
-        <div class="container">
+        <div class="container dashboard-page">
 
           <div class="card toolbar dashboard-toolbar">
             <div class="dashboard-toolbar-copy">
@@ -712,7 +718,7 @@ function loadPage(page) {
             </div>
           </div>
 
-          <div class="dashboard-kpi-grid">
+          <div class="dashboard-kpi-grid dashboard-kpi-grid-primary">
             <div class="dashboard-kpi-card tone-blue">
               <span>Today's Revenue</span>
               <h2 id="sales">₹ 0</h2>
@@ -751,7 +757,7 @@ function loadPage(page) {
             </div>
           </div>
 
-          <div class="dashboard-mini-grid">
+          <div class="dashboard-mini-grid dashboard-ops-grid">
             <div class="dashboard-mini-card">
               <span>Retail Sales</span>
               <h2 id="dashboardRetailSales">₹ 0</h2>
@@ -948,15 +954,19 @@ function loadPage(page) {
       content.innerHTML = `
         <div class="container ledger-page">
 
-          <div class="card search-card toolbar">
-            <div class="typeahead-field">
-              <input type="text" id="party" placeholder="Search party..." autocomplete="off" oninput="suggestParties()" onfocus="suggestParties()" onblur="scheduleSuggestionBoxHide('ledgerPartySuggestBox')">
-              <div id="ledgerPartySuggestBox" class="typeahead-box"></div>
+          <div class="card search-card toolbar ledger-query-card">
+            <div class="ledger-query-fields">
+              <div class="typeahead-field">
+                <input type="text" id="party" placeholder="Search party..." autocomplete="off" oninput="suggestParties()" onfocus="suggestParties()" onblur="scheduleSuggestionBoxHide('ledgerPartySuggestBox')">
+                <div id="ledgerPartySuggestBox" class="typeahead-box"></div>
+              </div>
+              <datalist id="partySuggestions"></datalist>
+              <input type="date" id="ledgerStartDate" aria-label="Ledger start date">
+              <input type="date" id="ledgerEndDate" aria-label="Ledger end date">
             </div>
-            <datalist id="partySuggestions"></datalist>
-            <input type="date" id="ledgerStartDate" aria-label="Ledger start date">
-            <input type="date" id="ledgerEndDate" aria-label="Ledger end date">
-            <button onclick="searchLedger()">Search</button>
+            <div class="ledger-query-actions">
+              <button onclick="searchLedger()">Search</button>
+            </div>
           </div>
 
           <div class="summary ledger-summary">
@@ -1003,23 +1013,23 @@ function loadPage(page) {
 
       content.innerHTML = `
         <div class="container">
-
-          <div class="page-intro-actions">
-            <button type="button" onclick="resetRetailForm()">New Bill</button>
-          </div>
-
           <div class="retail-layout">
             <div class="section">
               <div id="retailOfflineBanner" class="notice info" style="display:none;"></div>
               <datalist id="retailCustomerSuggestions"></datalist>
 
-              <div class="retail-mode-switch" role="tablist" aria-label="Retail billing mode">
-                <button type="button" id="retailModeRegular" class="retail-mode-button active" onclick="setRetailBillingMode('regular')">Billing</button>
-                <button type="button" id="retailModePayment" class="retail-mode-button" onclick="setRetailBillingMode('payment')">Payment Receipt</button>
+              <div class="retail-workbench-head">
+                <div class="retail-mode-switch" role="tablist" aria-label="Retail billing mode">
+                  <button type="button" id="retailModeRegular" class="retail-mode-button active" onclick="setRetailBillingMode('regular')">Billing</button>
+                  <button type="button" id="retailModePayment" class="retail-mode-button" onclick="setRetailBillingMode('payment')">Payment Receipt</button>
+                </div>
+                <div class="retail-header-actions">
+                  <button type="button" class="button-secondary retail-reset-button" onclick="resetRetailForm()">New Bill</button>
+                </div>
               </div>
 
               <div id="retailSalesSection" class="retail-billing-panel retail-billing-section retail-combined-billing">
-                <div class="retail-shortcuts">
+                <div class="retail-shortcuts retail-bill-details-panel">
                 <div class="retail-shortcuts-head">
                     <span>Bill Details</span>
                   </div>
@@ -1051,7 +1061,7 @@ function loadPage(page) {
                   </div>
                 </div>
 
-                <div class="retail-shortcuts retail-combined-shortcuts">
+                <div class="retail-shortcuts retail-combined-shortcuts retail-shortcuts-panel">
                   <div class="retail-shortcuts-head">
                     <span>Shortcuts</span>
                   </div>
@@ -1328,16 +1338,20 @@ function loadPage(page) {
       title.innerText = "Daily Sheet";
 
       content.innerHTML = `
-        <div class="container">
+        <div class="container daily-sheet-page">
 
-          <div class="card filter toolbar">
-            <select id="dailySheetType">
-              <option value="stock">Stock Sheet</option>
-              <option value="vendor">Vendor Balance Sheet</option>
-              <option value="dealer">Dealer Balance Sheet</option>
-            </select>
-            <input type="date" id="dailySheetDate">
-            <button onclick="loadDailySheet()">Load Sheet</button>
+          <div class="card filter toolbar daily-sheet-toolbar">
+            <div class="daily-sheet-filter-group">
+              <select id="dailySheetType">
+                <option value="stock">Stock Sheet</option>
+                <option value="vendor">Vendor Balance Sheet</option>
+                <option value="dealer">Dealer Balance Sheet</option>
+              </select>
+              <input type="date" id="dailySheetDate">
+            </div>
+            <div class="daily-sheet-toolbar-actions">
+              <button onclick="loadDailySheet()">Load Sheet</button>
+            </div>
           </div>
 
           <div class="section daily-sheet-card">
@@ -1369,12 +1383,16 @@ function loadPage(page) {
       title.innerText = "Analytics";
 
       content.innerHTML = `
-        <div class="container">
+        <div class="container analytics-page">
 
-          <div class="card filter toolbar">
-            <input type="date" id="startDate">
-            <input type="date" id="endDate">
-            <button onclick="loadAnalytics()">Load</button>
+          <div class="card filter toolbar analytics-toolbar">
+            <div class="analytics-filter-group">
+              <input type="date" id="startDate">
+              <input type="date" id="endDate">
+            </div>
+            <div class="analytics-toolbar-actions">
+              <button onclick="loadAnalytics()">Load</button>
+            </div>
           </div>
 
           <div class="grid analytics-kpi-grid">
@@ -1396,39 +1414,74 @@ function loadPage(page) {
             </div>
           </div>
 
-          <div class="chart-grid">
-          <div class="card chart-card">
-            <h2>Sales vs Purchase Trend</h2>
+          <div class="chart-grid analytics-chart-grid">
+          <div class="card chart-card analytics-chart-card">
+            <div class="dashboard-card-head">
+              <div>
+                <span>Trend</span>
+                <h2>Sales vs Purchase Trend</h2>
+              </div>
+            </div>
             <canvas id="trendChart"></canvas>
           </div>
 
-          <div class="card chart-card">
-            <h2>Cash In vs Cash Out</h2>
+          <div class="card chart-card analytics-chart-card">
+            <div class="dashboard-card-head">
+              <div>
+                <span>Cash Flow</span>
+                <h2>Cash In vs Cash Out</h2>
+              </div>
+            </div>
             <canvas id="cashFlowChart"></canvas>
           </div>
 
-          <div class="card chart-card">
-            <h2>Leakage Trend</h2>
+          <div class="card chart-card analytics-chart-card">
+            <div class="dashboard-card-head">
+              <div>
+                <span>Stock Risk</span>
+                <h2>Leakage Trend</h2>
+              </div>
+            </div>
             <canvas id="leakageChart"></canvas>
           </div>
 
-          <div class="card chart-card">
-            <h2>Purchase vs Sales Kg By Hen Type</h2>
+          <div class="card chart-card analytics-chart-card">
+            <div class="dashboard-card-head">
+              <div>
+                <span>Volume</span>
+                <h2>Purchase vs Sales Kg By Hen Type</h2>
+              </div>
+            </div>
             <canvas id="itemVolumeChart"></canvas>
           </div>
 
-          <div class="card chart-card">
-            <h2>Top Debtors</h2>
+          <div class="card chart-card analytics-chart-card">
+            <div class="dashboard-card-head">
+              <div>
+                <span>Exposure</span>
+                <h2>Top Debtors</h2>
+              </div>
+            </div>
             <canvas id="debtorChart"></canvas>
           </div>
 
-          <div class="card chart-card">
-            <h2>Payment Mode Split</h2>
+          <div class="card chart-card analytics-chart-card">
+            <div class="dashboard-card-head">
+              <div>
+                <span>Settlement</span>
+                <h2>Payment Mode Split</h2>
+              </div>
+            </div>
             <canvas id="paymentModeChart"></canvas>
           </div>
 
-          <div class="card chart-card">
-            <h2>Profit By Hen Type</h2>
+          <div class="card chart-card analytics-chart-card">
+            <div class="dashboard-card-head">
+              <div>
+                <span>Margin</span>
+                <h2>Profit By Hen Type</h2>
+              </div>
+            </div>
             <canvas id="profitByItemChart"></canvas>
           </div>
           </div>
