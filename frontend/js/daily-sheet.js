@@ -37,6 +37,13 @@ async function loadDailySheet() {
       meta.className = "notice info";
       meta.innerHTML = `<strong>${data.meta?.nag_available ? "NAG values are available for this sheet." : "Some older records were saved without NAG, so blank NAG cells mean count was not captured on that day."}</strong><br>Retail bills created from Retail Billing are included automatically under Retail and Retail Dressed. Retail credit customers are shown separately below the stock summary.`;
 
+      if (data.stock_warning) {
+        const warning = document.createElement("div");
+        warning.className = "notice error";
+        warning.innerHTML = `<strong>${data.stock_warning}</strong>`;
+        content.appendChild(warning);
+      }
+
       if (data.metric_cards?.length) {
         content.appendChild(createMetricCardStrip(data.metric_cards));
       }

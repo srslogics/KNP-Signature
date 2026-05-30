@@ -5620,18 +5620,17 @@ def daily_sheet(
             "weight": Decimal(row.opening_weight or 0)
         })
 
+    stock_warning = None
     if not processed_rows:
         if not previous_day_rows:
-            return {
-                "error": f"Process Day for {previous_date.strftime('%d/%m/%Y')} before loading this stock sheet."
-            }
-
-        missing_previous_day_items = [item for item in tracked_items if item not in opening_source]
-        if missing_previous_day_items:
-            return {
-                "error": "Previous day Process Day is incomplete. Missing: "
-                + ", ".join(missing_previous_day_items[:8])
-            }
+            stock_warning = f"Process Day for {previous_date.strftime('%d/%m/%Y')} is not filled yet."
+        else:
+            missing_previous_day_items = [item for item in tracked_items if item not in opening_source]
+            if missing_previous_day_items:
+                stock_warning = (
+                    "Previous day Process Day is incomplete. Missing: "
+                    + ", ".join(missing_previous_day_items[:8])
+                )
 
     opening_rows = []
     opening_total_quantity = None
@@ -6020,6 +6019,7 @@ def daily_sheet(
 
     return {
         "date": str(target_date),
+        "stock_warning": stock_warning,
         "opening_stock": {
             "rows": opening_rows,
             "total": format_sheet_row("TOTAL", opening_total_weight, (opening_total_amount / opening_total_weight) if opening_total_weight > 0 else Decimal("0"), opening_total_amount, opening_total_quantity)
@@ -6316,6 +6316,14 @@ def search_items(q: str = "", db: Session = Depends(get_db), scope=Depends(get_o
     )[:20]
 
     return {"results": results}
+
+
+@app.get("/items/tracked")
+def tracked_items(db: Session = Depends(get_db), scope=Depends(get_outlet_scope)):
+    if scope["mode"] == "all":
+        return {"error": "Select one outlet for tracked items", "items": []}
+
+    return {"items": sorted(stock_item_names_query(db, scope))}
 
 
 @app.get("/analytics/profit-by-item")

@@ -179,11 +179,16 @@ async function handleUpload(inputId, endpoint, label, preview = false) {
   }
 
   function addActualStockRow() {
+    return addActualStockRowWithValue("");
+  }
+
+  function addActualStockRowWithValue(itemType = "") {
     const container = document.getElementById("actualStockRows");
+    if (!container) return;
     const row = document.createElement("div");
     row.className = "upload-box actual-stock-row";
     row.innerHTML = `
-      <input type="text" class="actualItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)">
+      <input type="text" class="actualItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)" value="${escapeHtmlAttr(itemType)}">
       <input type="number" class="actualNag" placeholder="Actual NAG" min="0" step="1">
       <input type="number" class="actualWeight" placeholder="Actual stock (kg)" min="0" step="0.01">
       <button type="button" class="row-remove-button" onclick="removeActualStockRow(this)">Remove</button>
@@ -202,6 +207,41 @@ function initManualEntryRows() {
   if (document.getElementById("mortalityEntryRows")?.children.length === 0) addMortalityEntryRow();
   if (document.getElementById("openingBalanceEntryRows")?.children.length === 0) addOpeningBalanceEntryRow();
   if (document.getElementById("openingStockEntryRows")?.children.length === 0) addOpeningStockEntryRow();
+  loadTrackedActualStockRows();
+}
+
+async function loadTrackedActualStockRows() {
+  const container = document.getElementById("actualStockRows");
+  if (!container) return;
+
+  try {
+    const data = await apiCall("/items/tracked");
+    if (data?.error) {
+      if (container.children.length === 0) addActualStockRowWithValue("");
+      return;
+    }
+
+    const items = Array.isArray(data?.items) ? data.items.filter(Boolean) : [];
+    container.innerHTML = "";
+
+    if (!items.length) {
+      addActualStockRowWithValue("");
+      return;
+    }
+
+    items.forEach(item => addActualStockRowWithValue(item));
+  } catch (error) {
+    console.error(error);
+    if (container.children.length === 0) addActualStockRowWithValue("");
+  }
+}
+
+function escapeHtmlAttr(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function initPartyDirectory() {
