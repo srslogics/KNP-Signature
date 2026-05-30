@@ -43,16 +43,36 @@
     </div>
 
     <nav class="menu" aria-label="Primary navigation">
-      <button type="button" id="menu-dashboard" onclick="loadPage('dashboard')"><i data-lucide="layout-dashboard"></i><span>Dashboard</span></button>
-      <button type="button" id="menu-retail" onclick="loadPage('retail')"><i data-lucide="receipt-text"></i><span>Retail Billing</span></button>
-      <button type="button" id="menu-billing-setup" onclick="loadPage('billing-setup')"><i data-lucide="sliders-horizontal"></i><span>Billing Setup</span></button>
-      <button type="button" id="menu-upload" onclick="loadPage('upload')"><i data-lucide="upload-cloud"></i><span>Upload</span></button>
-      <button type="button" id="menu-analytics" onclick="loadPage('analytics')"><i data-lucide="chart-no-axes-combined"></i><span>Analytics</span></button>
-      <button type="button" id="menu-ledger" onclick="loadPage('ledger')"><i data-lucide="book-open-check"></i><span>Ledger</span></button>
-      <button type="button" id="menu-daily-sheet" onclick="loadPage('daily-sheet')"><i data-lucide="sheet"></i><span>Daily Sheet</span></button>
-      <button type="button" id="menu-access-control" onclick="loadPage('access-control')"><i data-lucide="shield-check"></i><span>Access Control</span></button>
-      <button type="button" id="menu-reports" onclick="loadPage('reports')"><i data-lucide="file-down"></i><span>Reports</span></button>
+      <div class="menu-group">
+        <span class="menu-label">Counter</span>
+        <button type="button" id="menu-dashboard" onclick="loadPage('dashboard')"><i data-lucide="layout-dashboard"></i><span>Dashboard</span></button>
+        <button type="button" id="menu-retail" onclick="loadPage('retail')"><i data-lucide="receipt-text"></i><span>Retail Billing</span></button>
+        <button type="button" id="menu-billing-setup" onclick="loadPage('billing-setup')"><i data-lucide="sliders-horizontal"></i><span>Billing Setup</span></button>
+      </div>
+
+      <div class="menu-group">
+        <span class="menu-label">Stock</span>
+        <button type="button" id="menu-upload" onclick="loadPage('upload')"><i data-lucide="upload-cloud"></i><span>Upload</span></button>
+        <button type="button" id="menu-daily-sheet" onclick="loadPage('daily-sheet')"><i data-lucide="sheet"></i><span>Daily Sheet</span></button>
+      </div>
+
+      <div class="menu-group">
+        <span class="menu-label">Finance</span>
+        <button type="button" id="menu-ledger" onclick="loadPage('ledger')"><i data-lucide="book-open-check"></i><span>Ledger</span></button>
+        <button type="button" id="menu-analytics" onclick="loadPage('analytics')"><i data-lucide="chart-no-axes-combined"></i><span>Analytics</span></button>
+        <button type="button" id="menu-reports" onclick="loadPage('reports')"><i data-lucide="file-down"></i><span>Reports</span></button>
+      </div>
+
+      <div class="menu-group menu-group-admin">
+        <span class="menu-label">Admin</span>
+        <button type="button" id="menu-access-control" onclick="loadPage('access-control')"><i data-lucide="shield-check"></i><span>Access Control</span></button>
+      </div>
     </nav>
+
+    <div class="sidebar-utility">
+      <button type="button" id="installAppButton" class="button-secondary sidebar-install" onclick="promptInstallApp()" style="display:none;">Install App</button>
+      <span class="sidebar-footnote">Counter tools on top, setup tools below.</span>
+    </div>
   </aside>
 
   <!-- Main -->
@@ -65,7 +85,6 @@
       </div>
 
       <div class="top-right">
-        <button type="button" id="installAppButton" onclick="promptInstallApp()" style="display:none;">Install App</button>
         <select id="outletSwitcher" onchange="handleOutletChange(this.value)" aria-label="Outlet selector"></select>
         <span id="authMeta"></span>
         <button type="button" id="authButton" onclick="handleAuthButton()">Login</button>

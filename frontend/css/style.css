@@ -47,6 +47,8 @@ body {
   position: sticky;
   top: 0;
   flex: 0 0 224px;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   padding: 18px 14px;
   background:
@@ -106,7 +108,23 @@ body {
 
 .menu {
   display: grid;
+  gap: 14px;
+  flex: 1;
+  align-content: start;
+}
+
+.menu-group {
+  display: grid;
   gap: 6px;
+}
+
+.menu-label {
+  padding: 0 6px 4px;
+  color: rgb(233 219 203 / 0.72);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .menu button {
@@ -155,6 +173,39 @@ body {
   width: 4px;
   border-radius: 999px;
   background: #e1bb88;
+}
+
+.sidebar-utility {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 14px 12px 0;
+  border-top: 1px solid rgb(255 255 255 / 0.08);
+}
+
+.button-secondary {
+  border-color: rgb(255 255 255 / 0.09);
+  background: rgb(255 255 255 / 0.08);
+  color: white;
+  box-shadow: none;
+}
+
+.button-secondary:hover {
+  border-color: rgb(225 187 136 / 0.26);
+  background: rgb(255 255 255 / 0.14);
+  box-shadow: none;
+}
+
+.sidebar-install {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 12px;
+}
+
+.sidebar-footnote {
+  color: rgb(224 209 193 / 0.72);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 button {
@@ -295,13 +346,13 @@ input[type="file"] {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
   position: sticky;
   top: 12px;
   z-index: 5;
   width: min(100%, 1240px);
   margin: 0 auto 16px;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border: 1px solid rgb(230 218 207 / 0.92);
   border-radius: 18px;
   background: rgb(255 255 255 / 0.82);
@@ -309,10 +360,14 @@ input[type="file"] {
   backdrop-filter: blur(16px);
 }
 
+.top-left {
+  min-width: 0;
+}
+
 .topbar h1 {
   margin: 0;
-  font-size: 24px;
-  line-height: 1.08;
+  font-size: 22px;
+  line-height: 1.04;
   font-weight: 800;
   letter-spacing: 0;
 }
@@ -320,42 +375,43 @@ input[type="file"] {
 .top-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   flex-shrink: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
   color: var(--muted);
   font-weight: 650;
 }
 
 #outletSwitcher {
-  width: 156px;
-  min-width: 150px;
-  min-height: 36px;
-  padding: 7px 12px;
+  width: 150px;
+  min-width: 144px;
+  min-height: 34px;
+  padding: 6px 12px;
   border-radius: 999px;
   background: rgb(255 255 255 / 0.92);
 }
 
 #authMeta {
-  max-width: 260px;
+  max-width: 230px;
+  padding: 0 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 13px;
 }
 
 #authButton {
-  min-width: 92px;
-  padding: 10px 16px;
+  min-width: 84px;
+  min-height: 34px;
+  padding: 8px 14px;
   border-radius: 999px;
 }
 
-#installAppButton {
-  min-width: 104px;
-  padding: 10px 16px;
-  border-radius: 999px;
+#todayDate {
+  color: #8a7766;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .card,
@@ -2710,8 +2766,23 @@ canvas {
 
   .menu {
     display: grid;
+    gap: 10px;
+  }
+
+  .menu-group {
+    display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
+  }
+
+  .menu-group-admin {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+
+  .menu-label {
+    grid-column: 1 / -1;
+    padding: 0 2px;
+    font-size: 10px;
   }
 
   .menu button {
@@ -2725,6 +2796,11 @@ canvas {
 
   .menu span {
     font-size: 13px;
+  }
+
+  .sidebar-utility {
+    margin-top: 12px;
+    padding: 12px 0 0;
   }
 
   .main {
@@ -2750,8 +2826,9 @@ canvas {
   }
 
   .top-right {
-    width: auto;
+    width: 100%;
     max-width: 100%;
+    justify-content: flex-start;
     font-size: 13px;
   }
 
