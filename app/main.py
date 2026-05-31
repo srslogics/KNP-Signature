@@ -3384,8 +3384,7 @@ def process_day_items(input_date: str, actual_stock: list[dict], db: Session = D
 
     existing_rows = db.query(models.DailyItemStock).filter(
         models.DailyItemStock.outlet_id == current_outlet.id,
-        models.DailyItemStock.date == target_date,
-        models.DailyItemStock.item_type.in_(expected_items)
+        models.DailyItemStock.date == target_date
     ).all()
     replaced_existing = len(existing_rows) > 0
 
@@ -3395,8 +3394,7 @@ def process_day_items(input_date: str, actual_stock: list[dict], db: Session = D
         if replaced_existing:
             db.query(models.DailyItemStock).filter(
                 models.DailyItemStock.outlet_id == current_outlet.id,
-                models.DailyItemStock.date == target_date,
-                models.DailyItemStock.item_type.in_(expected_items)
+                models.DailyItemStock.date == target_date
             ).delete(synchronize_session=False)
 
         for item_type, actuals in normalized_actuals.items():
@@ -5691,19 +5689,25 @@ def daily_sheet(
     rates = latest_item_rates(db, target_date, scope)
 
     processed_rows = apply_outlet_scope(
-        db.query(models.DailyItemStock).filter(models.DailyItemStock.date == target_date),
+        db.query(models.DailyItemStock).filter(
+            models.DailyItemStock.date == target_date,
+            models.DailyItemStock.item_type.in_(PROCESS_DAY_SOURCE_ITEMS)
+        ),
         models.DailyItemStock,
         scope
     ).all()
     processed_by_item = {row.item_type: row for row in processed_rows}
 
-    tracked_items = sorted(stock_item_names_query(db, scope))
+    tracked_items = list(PROCESS_DAY_SOURCE_ITEMS)
     opening_source = {}
     previous_date = target_date - timedelta(days=1)
 
     # First choice: exact previous day's actual closing from Process Day.
     previous_day_rows = apply_outlet_scope(
-        db.query(models.DailyItemStock).filter(models.DailyItemStock.date == previous_date),
+        db.query(models.DailyItemStock).filter(
+            models.DailyItemStock.date == previous_date,
+            models.DailyItemStock.item_type.in_(PROCESS_DAY_SOURCE_ITEMS)
+        ),
         models.DailyItemStock,
         scope
     ).all()
