@@ -3382,17 +3382,23 @@ def process_day_items(input_date: str, actual_stock: list[dict], db: Session = D
             "actual_quantity": Decimal("0")
         })
 
-    existing = db.query(models.DailyItemStock).filter(
+    existing_rows = db.query(models.DailyItemStock).filter(
         models.DailyItemStock.outlet_id == current_outlet.id,
         models.DailyItemStock.date == target_date,
         models.DailyItemStock.item_type.in_(expected_items)
-    ).first()
-    if existing:
-        return {"error": "One or more hen types already processed for this day"}
+    ).all()
+    replaced_existing = len(existing_rows) > 0
 
     results = []
 
     try:
+        if replaced_existing:
+            db.query(models.DailyItemStock).filter(
+                models.DailyItemStock.outlet_id == current_outlet.id,
+                models.DailyItemStock.date == target_date,
+                models.DailyItemStock.item_type.in_(expected_items)
+            ).delete(synchronize_session=False)
+
         for item_type, actuals in normalized_actuals.items():
             actual_weight = actuals["actual_weight"]
             actual_quantity = actuals["actual_quantity"]
@@ -3547,6 +3553,7 @@ def process_day_items(input_date: str, actual_stock: list[dict], db: Session = D
     return {
         "status": "success",
         "date": str(target_date),
+        "replaced_existing": replaced_existing,
         "items": results,
         "total_expected_nag": float(closing_total.get("nag") or 0),
         "total_expected_stock": float(closing_total.get("weight") or 0),

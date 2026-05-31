@@ -155,13 +155,14 @@ async function handleUpload(inputId, endpoint, label, preview = false) {
         setUploadStatus("error", data.error);
         setProcessDaySummary("error", data.error);
       } else {
+        const wasUpdated = Boolean(data.replaced_existing);
         const quantityLeakage = Number(data.total_quantity_leakage || 0);
         const leakageText = `Leakage: ${Number(data.total_leakage || 0).toLocaleString()} kg${quantityLeakage ? `, ${quantityLeakage.toLocaleString()} NAG` : ""}`;
-        showToast(`Processed. ${leakageText}`);
-        setUploadStatus("success", `Day processed. ${leakageText}`);
+        showToast(`${wasUpdated ? "Updated" : "Processed"}. ${leakageText}`);
+        setUploadStatus("success", `Day ${wasUpdated ? "updated" : "processed"}. ${leakageText}`);
         setProcessDaySummary(
           "success",
-          `Process Day saved for ${formatProcessDayDisplayDate(data.date || date)}`,
+          `Process Day ${wasUpdated ? "updated" : "saved"} for ${formatProcessDayDisplayDate(data.date || date)}`,
           [
             `Hen types saved: ${Array.isArray(data.items) ? data.items.length : rows.length}`,
             `Expected stock: ${formatProcessMetric(data.total_expected_stock, "kg")} ${formatProcessMetricInline(data.total_expected_nag, "NAG")}`,
