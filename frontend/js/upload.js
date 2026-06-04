@@ -506,7 +506,7 @@ async function fetchUploadPartyPhone(name) {
 
   try {
     const data = await optionalApiCall(`/party/profile?name=${encodeURIComponent(query)}`, null, "GET", null, { cache: false });
-    return sanitizeWhatsAppPhoneNumber(data?.phone || "");
+    return sanitizeWhatsAppPhoneNumber(data?.party?.phone || data?.phone || "");
   } catch (error) {
     console.error(error);
     return "";

@@ -2376,6 +2376,17 @@ input[type="file"] {
   min-width: 148px;
 }
 
+.manual-row-actions .manual-whatsapp-button {
+  border-color: rgb(183 121 31 / 0.14);
+  background: rgb(183 121 31 / 0.08);
+  color: var(--brand-dark);
+}
+
+.manual-row-actions .manual-whatsapp-button:hover {
+  border-color: rgb(183 121 31 / 0.22);
+  background: rgb(183 121 31 / 0.14);
+}
+
 .dealer-entry-row {
   grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
 }
