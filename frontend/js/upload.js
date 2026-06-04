@@ -262,7 +262,36 @@ function initManualEntryRows() {
   if (document.getElementById("mortalityEntryRows")?.children.length === 0) addMortalityEntryRow();
   if (document.getElementById("openingBalanceEntryRows")?.children.length === 0) addOpeningBalanceEntryRow();
   if (document.getElementById("openingStockEntryRows")?.children.length === 0) addOpeningStockEntryRow();
+  upgradeManualWhatsappActions();
   loadTrackedActualStockRows();
+}
+
+function upgradeManualWhatsappActions() {
+  document.querySelectorAll("#dealerEntryRows .manual-entry-row").forEach(row => {
+    if (row.querySelector(".manual-row-actions")) return;
+    const removeButton = row.querySelector(".row-remove-button");
+    if (!removeButton) return;
+    const actionWrap = document.createElement("div");
+    actionWrap.className = "manual-row-actions";
+    actionWrap.innerHTML = `
+      <button type="button" class="button-secondary manual-whatsapp-button" onclick="sendDealerEntryOnWhatsApp(this)">Send on WhatsApp</button>
+    `;
+    actionWrap.appendChild(removeButton);
+    row.appendChild(actionWrap);
+  });
+
+  document.querySelectorAll("#vendorEntryRows .manual-entry-row").forEach(row => {
+    if (row.querySelector(".manual-row-actions")) return;
+    const removeButton = row.querySelector(".row-remove-button");
+    if (!removeButton) return;
+    const actionWrap = document.createElement("div");
+    actionWrap.className = "manual-row-actions";
+    actionWrap.innerHTML = `
+      <button type="button" class="button-secondary manual-whatsapp-button" onclick="sendVendorEntryOnWhatsApp(this)">Send on WhatsApp</button>
+    `;
+    actionWrap.appendChild(removeButton);
+    row.appendChild(actionWrap);
+  });
 }
 
 async function loadTrackedActualStockRows() {
