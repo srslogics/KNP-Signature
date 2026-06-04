@@ -1,11 +1,14 @@
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 
 HOST = "127.0.0.1"
 PORT = 9876
 CHARS_PER_LINE = 42
+QR_IMAGE_PATH = Path(__file__).resolve().parent / "frontend" / "assets" / "payment-qr.png"
+QR_UPI_ID = "soney.1105-1@okicici"
 
 
 def esc_init() -> bytes:
@@ -31,6 +34,10 @@ def esc_feed(lines: int = 1) -> bytes:
 
 def esc_cut() -> bytes:
     return b"\x1dV\x00"
+
+
+def esc_raster_image(image_bytes: bytes, width_bytes: int, height: int) -> bytes:
+    return b"\x1dv0\x00" + bytes([width_bytes % 256, width_bytes // 256, height % 256, height // 256]) + image_bytes
 
 
 def encode_line(text: str) -> bytes:
@@ -74,6 +81,58 @@ def hr() -> str:
 
 def center(text: str) -> bytes:
     return esc_align("center") + encode_line(text) + esc_align("left")
+
+
+def _load_qr_image_bytes() -> bytes:
+    try:
+        from PIL import Image  # type: ignore
+    except Exception:
+        return b""
+
+    if not QR_IMAGE_PATH.exists():
+        return b""
+
+    try:
+        image = Image.open(QR_IMAGE_PATH).convert("L")
+    except Exception:
+        return b""
+
+    max_width = 220
+    if image.width > max_width:
+        scale = max_width / float(image.width)
+        resized_height = max(1, int(image.height * scale))
+        image = image.resize((max_width, resized_height))
+
+    thresholded = image.point(lambda px: 0 if px < 200 else 255, mode="1")
+    width, height = thresholded.size
+    width_bytes = (width + 7) // 8
+    raster = bytearray()
+
+    for y in range(height):
+        for byte_index in range(width_bytes):
+            value = 0
+            for bit in range(8):
+                x = byte_index * 8 + bit
+                if x < width:
+                    pixel_on = thresholded.getpixel((x, y)) == 0
+                    if pixel_on:
+                        value |= 1 << (7 - bit)
+            raster.append(value)
+
+    return esc_align("center") + esc_raster_image(bytes(raster), width_bytes, height) + esc_feed(1) + esc_align("left")
+
+
+def payment_qr_block() -> bytes:
+    qr_bytes = _load_qr_image_bytes()
+    if not qr_bytes:
+        return b""
+
+    out = bytearray()
+    out += encode_line(hr())
+    out += center("Scan & Pay")
+    out += qr_bytes
+    out += center(QR_UPI_ID)
+    return bytes(out)
 
 
 def wrap_text(text: str, width: int):
@@ -213,6 +272,7 @@ def build_retail_bytes(payload: dict) -> bytes:
         for line in wrap_text(str(bill.get("notes")), CHARS_PER_LINE):
             out += encode_line(line)
 
+    out += payment_qr_block()
     out += encode_line(hr())
     out += center(f"Created By: {bill.get('cashier_name') or 'admin'}")
     out += center("Thank You")

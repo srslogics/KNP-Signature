@@ -383,7 +383,10 @@ function addDealerEntryRow() {
     <input type="number" class="dealerRate" placeholder="Rate/kg" min="0" step="0.01">
     <input type="number" class="dealerTransportMortalityNag" placeholder="Transport NAG" min="0" step="1">
     <input type="number" class="dealerTransportMortalityWeight" placeholder="Transport KG" min="0" step="0.01">
-    <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
+    <div class="manual-row-actions">
+      <button type="button" class="button-secondary manual-whatsapp-button" onclick="sendDealerEntryOnWhatsApp(this)">Send on WhatsApp</button>
+      <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
+    </div>
   `, "dealer-entry-row");
 }
 
@@ -398,7 +401,10 @@ function addVendorEntryRow() {
     <input type="number" class="vendorNag" placeholder="NAG" min="0" step="1">
     <input type="number" class="vendorWeight" placeholder="Kgs" min="0" step="0.01">
     <input type="number" class="vendorRate" placeholder="Rate/kg" min="0" step="0.01">
-    <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
+    <div class="manual-row-actions">
+      <button type="button" class="button-secondary manual-whatsapp-button" onclick="sendVendorEntryOnWhatsApp(this)">Send on WhatsApp</button>
+      <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
+    </div>
   `, "vendor-entry-row");
 }
 
@@ -454,6 +460,127 @@ function addOpeningStockEntryRow() {
     <input type="number" class="openingStockWeight" placeholder="Opening kgs" min="0" step="0.01">
     <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
   `, "opening-stock-entry-row");
+}
+
+function sanitizeWhatsAppPhoneNumber(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function formatManualEntryValue(value, fallback = "-") {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+async function fetchUploadPartyPhone(name) {
+  const query = String(name || "").trim();
+  if (!query) return "";
+
+  try {
+    const data = await optionalApiCall(`/party/profile?name=${encodeURIComponent(query)}`, null, "GET", null, { cache: false });
+    return sanitizeWhatsAppPhoneNumber(data?.phone || "");
+  } catch (error) {
+    console.error(error);
+    return "";
+  }
+}
+
+function openUploadWhatsApp(phone, message) {
+  const target = phone
+    ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+    : `https://wa.me/?text=${encodeURIComponent(message)}`;
+  window.open(target, "_blank", "noopener,noreferrer");
+}
+
+function buildDealerWhatsAppMessage(row, workingDate) {
+  return [
+    `Dealer Purchase - ${formatProcessDayDisplayDate(workingDate)}`,
+    `Dealer: ${formatManualEntryValue(row.dealer)}`,
+    `Bill No: ${formatManualEntryValue(row.bill_no)}`,
+    `Hen Type: ${formatManualEntryValue(row.hen_type)}`,
+    `NAG: ${formatManualEntryValue(row.nag, "0")}`,
+    `Kgs: ${formatManualEntryValue(row.kgs, "0")}`,
+    `Rate/kg: ${formatManualEntryValue(row.rate_per_kg, "0")}`,
+    `Transport NAG: ${formatManualEntryValue(row.transport_mortality_nag, "0")}`,
+    `Transport KG: ${formatManualEntryValue(row.transport_mortality_weight, "0")}`
+  ].join("\n");
+}
+
+function buildVendorWhatsAppMessage(row, workingDate) {
+  return [
+    `Vendor Sale - ${formatProcessDayDisplayDate(workingDate)}`,
+    `Vendor: ${formatManualEntryValue(row.vendor)}`,
+    `Category: ${formatManualEntryValue(row.category)}`,
+    `Hen Type: ${formatManualEntryValue(row.hen_type)}`,
+    `NAG: ${formatManualEntryValue(row.nag, "0")}`,
+    `Kgs: ${formatManualEntryValue(row.kgs, "0")}`,
+    `Rate/kg: ${formatManualEntryValue(row.rate_per_kg, "0")}`
+  ].join("\n");
+}
+
+async function sendDealerEntryOnWhatsApp(button) {
+  const workingDate = document.getElementById("uploadWorkingDate")?.value;
+  const row = button?.closest(".manual-entry-row");
+  if (!workingDate || !row) {
+    showToast("Select working date first");
+    return;
+  }
+
+  const payload = {
+    dealer: row.querySelector(".dealerParty")?.value.trim(),
+    bill_no: row.querySelector(".dealerBillNo")?.value.trim(),
+    hen_type: row.querySelector(".dealerItem")?.value.trim(),
+    nag: row.querySelector(".dealerNag")?.value,
+    kgs: row.querySelector(".dealerWeight")?.value,
+    rate_per_kg: row.querySelector(".dealerRate")?.value,
+    transport_mortality_nag: row.querySelector(".dealerTransportMortalityNag")?.value,
+    transport_mortality_weight: row.querySelector(".dealerTransportMortalityWeight")?.value
+  };
+
+  if (!payload.dealer) {
+    showToast("Enter dealer name first");
+    return;
+  }
+
+  const phone = await fetchUploadPartyPhone(payload.dealer);
+  if (!phone) {
+    showToast("Dealer phone number not found");
+    return;
+  }
+
+  openUploadWhatsApp(phone, buildDealerWhatsAppMessage(payload, workingDate));
+  showToast("WhatsApp opened for dealer");
+}
+
+async function sendVendorEntryOnWhatsApp(button) {
+  const workingDate = document.getElementById("uploadWorkingDate")?.value;
+  const row = button?.closest(".manual-entry-row");
+  if (!workingDate || !row) {
+    showToast("Select working date first");
+    return;
+  }
+
+  const payload = {
+    vendor: row.querySelector(".vendorParty")?.value.trim(),
+    category: row.querySelector(".vendorCategory")?.value.trim(),
+    hen_type: row.querySelector(".vendorItem")?.value.trim(),
+    nag: row.querySelector(".vendorNag")?.value,
+    kgs: row.querySelector(".vendorWeight")?.value,
+    rate_per_kg: row.querySelector(".vendorRate")?.value
+  };
+
+  if (!payload.vendor) {
+    showToast("Enter vendor name first");
+    return;
+  }
+
+  const phone = await fetchUploadPartyPhone(payload.vendor);
+  if (!phone) {
+    showToast("Vendor phone number not found");
+    return;
+  }
+
+  openUploadWhatsApp(phone, buildVendorWhatsAppMessage(payload, workingDate));
+  showToast("WhatsApp opened for vendor");
 }
 
 async function submitManualEntries(endpoint, rows, label) {

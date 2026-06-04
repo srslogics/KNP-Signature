@@ -2348,16 +2348,32 @@ input[type="file"] {
 }
 
 .manual-entry-row .row-remove-button,
-.actual-stock-row .row-remove-button {
+.actual-stock-row .row-remove-button,
+.manual-entry-row .manual-row-actions {
   grid-column: 1 / -1;
   align-self: start;
   justify-self: start;
+}
+
+.manual-entry-row .row-remove-button,
+.actual-stock-row .row-remove-button {
   width: auto;
   max-width: none;
   min-width: 132px;
   min-height: 44px;
   padding-inline: 16px;
   white-space: nowrap;
+}
+
+.manual-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.manual-row-actions .manual-whatsapp-button,
+.manual-row-actions .row-remove-button {
+  min-width: 148px;
 }
 
 .dealer-entry-row {
