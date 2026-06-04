@@ -500,6 +500,20 @@ function formatManualEntryValue(value, fallback = "-") {
   return text || fallback;
 }
 
+function formatManualCurrency(value) {
+  return Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function calculateManualRowAmount(weight, rate) {
+  const qty = Number(weight || 0);
+  const price = Number(rate || 0);
+  if (!Number.isFinite(qty) || !Number.isFinite(price)) return 0;
+  return qty * price;
+}
+
 async function fetchUploadPartyPhone(name) {
   const query = String(name || "").trim();
   if (!query) return "";
@@ -521,6 +535,7 @@ function openUploadWhatsApp(phone, message) {
 }
 
 function buildDealerWhatsAppMessage(row, workingDate) {
+  const amount = calculateManualRowAmount(row.kgs, row.rate_per_kg);
   return [
     `Dealer Purchase - ${formatProcessDayDisplayDate(workingDate)}`,
     `Dealer: ${formatManualEntryValue(row.dealer)}`,
@@ -529,12 +544,14 @@ function buildDealerWhatsAppMessage(row, workingDate) {
     `NAG: ${formatManualEntryValue(row.nag, "0")}`,
     `Kgs: ${formatManualEntryValue(row.kgs, "0")}`,
     `Rate/kg: ${formatManualEntryValue(row.rate_per_kg, "0")}`,
+    `Amount: Rs ${formatManualCurrency(amount)}`,
     `Transport NAG: ${formatManualEntryValue(row.transport_mortality_nag, "0")}`,
     `Transport KG: ${formatManualEntryValue(row.transport_mortality_weight, "0")}`
   ].join("\n");
 }
 
 function buildVendorWhatsAppMessage(row, workingDate) {
+  const amount = calculateManualRowAmount(row.kgs, row.rate_per_kg);
   return [
     `Vendor Sale - ${formatProcessDayDisplayDate(workingDate)}`,
     `Vendor: ${formatManualEntryValue(row.vendor)}`,
@@ -542,7 +559,8 @@ function buildVendorWhatsAppMessage(row, workingDate) {
     `Hen Type: ${formatManualEntryValue(row.hen_type)}`,
     `NAG: ${formatManualEntryValue(row.nag, "0")}`,
     `Kgs: ${formatManualEntryValue(row.kgs, "0")}`,
-    `Rate/kg: ${formatManualEntryValue(row.rate_per_kg, "0")}`
+    `Rate/kg: ${formatManualEntryValue(row.rate_per_kg, "0")}`,
+    `Amount: Rs ${formatManualCurrency(amount)}`
   ].join("\n");
 }
 
