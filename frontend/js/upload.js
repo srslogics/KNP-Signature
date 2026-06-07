@@ -514,16 +514,19 @@ function calculateManualRowAmount(weight, rate) {
   return qty * price;
 }
 
-async function fetchUploadPartyPhone(name) {
+async function fetchUploadPartyDetails(name) {
   const query = String(name || "").trim();
-  if (!query) return "";
+  if (!query) return { phone: "", balance: 0 };
 
   try {
     const data = await optionalApiCall(`/party/profile?name=${encodeURIComponent(query)}`, null, "GET", null, { cache: false });
-    return sanitizeWhatsAppPhoneNumber(data?.party?.phone || data?.phone || "");
+    return {
+      phone: sanitizeWhatsAppPhoneNumber(data?.party?.phone || data?.phone || ""),
+      balance: Number(data?.party?.balance_after || data?.balance_after || 0)
+    };
   } catch (error) {
     console.error(error);
-    return "";
+    return { phone: "", balance: 0 };
   }
 }
 
@@ -534,11 +537,12 @@ function openUploadWhatsApp(phone, message) {
   window.open(target, "_blank", "noopener,noreferrer");
 }
 
-function buildDealerWhatsAppMessage(row, workingDate) {
+function buildDealerWhatsAppMessage(row, workingDate, oldBalance = 0) {
   const amount = calculateManualRowAmount(row.kgs, row.rate_per_kg);
   return [
     `Dealer Purchase - ${formatProcessDayDisplayDate(workingDate)}`,
     `Dealer: ${formatManualEntryValue(row.dealer)}`,
+    `Old Balance: Rs ${formatManualCurrency(oldBalance)}`,
     `Bill No: ${formatManualEntryValue(row.bill_no)}`,
     `Hen Type: ${formatManualEntryValue(row.hen_type)}`,
     `NAG: ${formatManualEntryValue(row.nag, "0")}`,
@@ -550,11 +554,12 @@ function buildDealerWhatsAppMessage(row, workingDate) {
   ].join("\n");
 }
 
-function buildVendorWhatsAppMessage(row, workingDate) {
+function buildVendorWhatsAppMessage(row, workingDate, oldBalance = 0) {
   const amount = calculateManualRowAmount(row.kgs, row.rate_per_kg);
   return [
     `Vendor Sale - ${formatProcessDayDisplayDate(workingDate)}`,
     `Vendor: ${formatManualEntryValue(row.vendor)}`,
+    `Old Balance: Rs ${formatManualCurrency(oldBalance)}`,
     `Category: ${formatManualEntryValue(row.category)}`,
     `Hen Type: ${formatManualEntryValue(row.hen_type)}`,
     `NAG: ${formatManualEntryValue(row.nag, "0")}`,
@@ -588,13 +593,13 @@ async function sendDealerEntryOnWhatsApp(button) {
     return;
   }
 
-  const phone = await fetchUploadPartyPhone(payload.dealer);
-  if (!phone) {
+  const party = await fetchUploadPartyDetails(payload.dealer);
+  if (!party.phone) {
     showToast("Dealer phone number not found");
     return;
   }
 
-  openUploadWhatsApp(phone, buildDealerWhatsAppMessage(payload, workingDate));
+  openUploadWhatsApp(party.phone, buildDealerWhatsAppMessage(payload, workingDate, party.balance));
   showToast("WhatsApp opened for dealer");
 }
 
@@ -620,13 +625,13 @@ async function sendVendorEntryOnWhatsApp(button) {
     return;
   }
 
-  const phone = await fetchUploadPartyPhone(payload.vendor);
-  if (!phone) {
+  const party = await fetchUploadPartyDetails(payload.vendor);
+  if (!party.phone) {
     showToast("Vendor phone number not found");
     return;
   }
 
-  openUploadWhatsApp(phone, buildVendorWhatsAppMessage(payload, workingDate));
+  openUploadWhatsApp(party.phone, buildVendorWhatsAppMessage(payload, workingDate, party.balance));
   showToast("WhatsApp opened for vendor");
 }
 
