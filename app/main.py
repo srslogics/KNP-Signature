@@ -11,6 +11,9 @@ from fastapi import FastAPI, HTTPException, Header
 from app.db import engine, Base
 from fastapi import UploadFile, File, Depends, Body
 import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 from app.db import SessionLocal
 from app import models
@@ -1126,8 +1129,8 @@ def summarize_ledger_transactions(txns, settled_keys=None):
     return summarized
 
 
-def build_ledger(db: Session, txns):
-    balance = Decimal("0")
+def build_ledger(db: Session, txns, opening_balance=Decimal("0")):
+    balance = Decimal(opening_balance or 0)
     ledger = []
     settled_keys = settled_retail_bill_keys(db, txns)
 
@@ -1152,6 +1155,54 @@ def build_ledger(db: Session, txns):
         })
 
     return balance, ledger
+
+
+def build_party_summary_for_period(txns, opening_balance, closing_balance):
+    last_txn = txns[-1] if txns else None
+    total_sales = sum(Decimal(t.amount or 0) for t in txns if t.type == "SALE")
+    total_purchase = sum(Decimal(t.amount or 0) for t in txns if t.type == "PURCHASE")
+    total_received = sum(Decimal(t.amount or 0) for t in txns if t.type == "PAYMENT" and t.category == "RECEIVED")
+    total_paid = sum(Decimal(t.amount or 0) for t in txns if t.type == "PAYMENT" and t.category == "PAID")
+
+    return {
+        "opening_balance": float(Decimal(opening_balance or 0)),
+        "total_sales": float(total_sales),
+        "total_purchase": float(total_purchase),
+        "total_received": float(total_received),
+        "total_paid": float(total_paid),
+        "current_balance": float(Decimal(closing_balance or 0)),
+        "last_transaction_date": str(last_txn.date) if last_txn else None
+    }
+
+
+def build_party_ledger_window(db: Session, query, start=None, end=None):
+    txns = query.order_by(
+        models.Transaction.date.asc(),
+        models.Transaction.created_at.asc()
+    ).all()
+    txns = filter_party_ledger_transactions(db, txns)
+
+    opening_txns = txns
+    if start:
+        opening_txns = [txn for txn in txns if txn.date < start]
+    else:
+        opening_txns = []
+
+    range_txns = [
+        txn for txn in txns
+        if (not start or txn.date >= start) and (not end or txn.date <= end)
+    ]
+
+    opening_balance = Decimal("0")
+    if opening_txns:
+        opening_balance, _ = build_ledger(db, opening_txns)
+
+    closing_balance = opening_balance
+    ledger = []
+    if range_txns:
+        closing_balance, ledger = build_ledger(db, range_txns, opening_balance=opening_balance)
+
+    return opening_balance, closing_balance, range_txns, ledger
 
 
 def build_party_summary(db: Session, txns, balance):
@@ -1360,10 +1411,116 @@ def upload_result(inserted, skipped, errors, extra=None):
     return result
 
 
-def report_response(rows, columns, filename, file_format, title):
+def report_response(rows, columns, filename, file_format, title, meta_rows=None):
     if file_format == "excel":
         output = BytesIO()
-        pd.DataFrame(rows, columns=columns).to_excel(output, index=False, sheet_name="Report")
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Report"
+
+        header_fill = PatternFill("solid", fgColor="EDE7DB")
+        title_fill = PatternFill("solid", fgColor="F7F2E8")
+        meta_fill = PatternFill("solid", fgColor="FBF8F1")
+        summary_fill = PatternFill("solid", fgColor="F3E2BE")
+        alt_fill = PatternFill("solid", fgColor="FCFAF5")
+        thin_border = Border(
+            left=Side(style="thin", color="D6C7AE"),
+            right=Side(style="thin", color="D6C7AE"),
+            top=Side(style="thin", color="D6C7AE"),
+            bottom=Side(style="thin", color="D6C7AE"),
+        )
+        summary_border = Border(
+            left=Side(style="thin", color="C9A86A"),
+            right=Side(style="thin", color="C9A86A"),
+            top=Side(style="medium", color="C9A86A"),
+            bottom=Side(style="medium", color="C9A86A"),
+        )
+
+        title_cell = sheet.cell(row=1, column=1, value=title)
+        title_cell.font = Font(size=14, bold=True)
+        title_cell.fill = title_fill
+        title_cell.alignment = Alignment(horizontal="left", vertical="center")
+        sheet.row_dimensions[1].height = 24
+        if columns:
+            sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(columns))
+
+        current_row = 2
+        for meta in meta_rows or []:
+            meta_cell = sheet.cell(row=current_row, column=1, value=meta)
+            meta_cell.font = Font(bold=True)
+            meta_cell.fill = meta_fill
+            meta_cell.alignment = Alignment(horizontal="left", vertical="center")
+            sheet.row_dimensions[current_row].height = 20
+            if columns:
+                sheet.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=len(columns))
+            current_row += 1
+
+        if meta_rows:
+            current_row += 1
+
+        header_row = current_row
+        for index, column in enumerate(columns, start=1):
+            cell = sheet.cell(row=header_row, column=index, value=column)
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+        sheet.row_dimensions[header_row].height = 22
+
+        for row_index, row in enumerate(rows, start=header_row + 1):
+            row_label = str(row.get("Type", "") or row.get(columns[0], "")).strip().lower() if columns else ""
+            is_summary_row = row_label in ["closing balance", "total"]
+            is_alt_row = (row_index - header_row) % 2 == 0
+            for col_index, column in enumerate(columns, start=1):
+                raw_value = row.get(column, "")
+                cell = sheet.cell(row=row_index, column=col_index, value=raw_value)
+                cell.border = summary_border if is_summary_row else thin_border
+                if is_summary_row:
+                    cell.font = Font(bold=True)
+                    cell.fill = summary_fill
+                elif is_alt_row:
+                    cell.fill = alt_fill
+                cell.alignment = Alignment(
+                    horizontal="right" if isinstance(raw_value, (int, float, Decimal)) else "left",
+                    vertical="center"
+                )
+                if isinstance(raw_value, (int, float, Decimal)):
+                    if column in ["Amount", "Balance", "Rate", "Sales", "Purchase", "Profit", "Payment Received", "Payment Paid", "Opening", "Receivable", "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total"]:
+                        cell.number_format = '₹#,##0.00'
+                    elif column in ["KGS", "Kg", "Opening Kg", "Purchase Kg", "Sales Kg", "Expected Kg", "Actual Kg", "Leakage Kg", "Weight"]:
+                        cell.number_format = '#,##0.000'
+                    elif column in ["NAG", "Nag"]:
+                        cell.number_format = '#,##0'
+                    if column in ["Amount", "Balance"] and float(raw_value or 0) < 0:
+                        cell.font = Font(bold=is_summary_row, color="A94442")
+                    elif is_summary_row:
+                        cell.font = Font(bold=True)
+
+            sheet.row_dimensions[row_index].height = 20
+
+        center_columns = {"Date", "Type", "Bill No", "Mode", "Category"}
+        for index, column in enumerate(columns, start=1):
+            if column in center_columns:
+                for row_index in range(header_row + 1, sheet.max_row + 1):
+                    sheet.cell(row=row_index, column=index).alignment = Alignment(horizontal="center", vertical="center")
+
+        for index, column in enumerate(columns, start=1):
+            values = [str(column)]
+            for row in rows:
+                values.append(str(row.get(column, "")))
+            width_cap = 24 if column in ["Category", "Item"] else 16
+            if column in ["Date", "Type", "Bill No", "Mode"]:
+                width_cap = 14
+            if column in ["Amount", "Balance"]:
+                width_cap = 16
+            width = min(max(len(value) for value in values) + 2, width_cap)
+            sheet.column_dimensions[get_column_letter(index)].width = max(width, 11)
+
+        sheet.freeze_panes = f"A{header_row + 1}"
+        sheet.sheet_view.showGridLines = False
+        if columns:
+            sheet.auto_filter.ref = f"A{header_row}:{get_column_letter(len(columns))}{sheet.max_row}"
+        workbook.save(output)
         output.seek(0)
         return Response(
             content=output.read(),
@@ -1373,7 +1530,7 @@ def report_response(rows, columns, filename, file_format, title):
 
     if file_format == "pdf":
         return Response(
-            content=build_simple_pdf(title, columns, rows),
+            content=build_simple_pdf(title, columns, rows, meta_rows=meta_rows),
             media_type="application/pdf",
             headers={"Content-Disposition": f"attachment; filename={filename}.pdf"}
         )
@@ -1381,8 +1538,21 @@ def report_response(rows, columns, filename, file_format, title):
     return {"error": "Invalid format"}
 
 
-def build_simple_pdf(title, columns, rows):
+def format_export_date(value):
+    if not value:
+        return ""
+    try:
+        return pd.to_datetime(value).strftime("%d/%m/%Y")
+    except Exception:
+        return str(value)
+
+
+def build_simple_pdf(title, columns, rows, meta_rows=None):
     lines = [title, ""]
+    for meta in meta_rows or []:
+        lines.append(meta)
+    if meta_rows:
+        lines.append("")
     lines.append(" | ".join(columns))
     lines.append("-" * min(110, max(24, len(lines[-1]))))
 
@@ -3588,6 +3758,9 @@ def get_party_ledger(
     if not party:
         return {"error": "Party not found"}
 
+    start = None
+    end = None
+
     query = apply_outlet_scope(
         db.query(models.Transaction).filter_by(party_id=party_id),
         models.Transaction,
@@ -3598,34 +3771,27 @@ def get_party_ledger(
         start = parse_input_date(start_date)
         if not start:
             return {"error": "Invalid start date"}
-        query = query.filter(models.Transaction.date >= start)
 
     if end_date:
         end = parse_input_date(end_date)
         if not end:
             return {"error": "Invalid end date"}
-        query = query.filter(models.Transaction.date <= end)
-
-    # --- Fetch transactions ---
-    txns = query.order_by(models.Transaction.date.asc()).all()
-    txns = filter_party_ledger_transactions(db, txns)
+    opening_balance, balance, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
 
     if not txns:
         return {
             "party_id": party_id,
             "party_name": party.name,
-            "total_balance": 0,
-            "summary": build_party_summary(db, [], Decimal("0")),
+            "total_balance": float(opening_balance),
+            "summary": build_party_summary_for_period([], opening_balance, opening_balance),
             "ledger": []
         }
-
-    balance, ledger = build_ledger(db, txns)
 
     return {
         "party_id": party_id,
         "party_name": party.name,
         "total_balance": float(balance),
-        "summary": build_party_summary(db, txns, balance),
+        "summary": build_party_summary_for_period(txns, opening_balance, balance),
         "ledger": ledger
     }
 
@@ -3859,6 +4025,9 @@ def get_ledger_by_name(
     # --- Step 4: Single match → ledger ---
     party_id = party_ids[0]
 
+    start = None
+    end = None
+
     query = apply_outlet_scope(
         db.query(models.Transaction).filter(models.Transaction.party_id == party_id),
         models.Transaction,
@@ -3869,32 +4038,27 @@ def get_ledger_by_name(
         start = parse_input_date(start_date)
         if not start:
             return {"error": "Invalid start date"}
-        query = query.filter(models.Transaction.date >= start)
 
     if end_date:
         end = parse_input_date(end_date)
         if not end:
             return {"error": "Invalid end date"}
-        query = query.filter(models.Transaction.date <= end)
 
     party = db.query(models.Party).filter_by(id=party_id).first()
-    txns = query.order_by(models.Transaction.date.asc()).all()
-    txns = filter_party_ledger_transactions(db, txns)
+    opening_balance, balance, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
 
     if not txns:
         return {
             "party_name": party.name if party else name,
-            "total_balance": 0,
-        "summary": build_party_summary(db, [], Decimal("0")),
+            "total_balance": float(opening_balance),
+            "summary": build_party_summary_for_period([], opening_balance, opening_balance),
             "ledger": []
         }
-
-    balance, ledger = build_ledger(db, txns)
 
     return {
         "party_name": party.name if party else name,
         "total_balance": float(balance),
-        "summary": build_party_summary(db, txns, balance),
+        "summary": build_party_summary_for_period(txns, opening_balance, balance),
         "ledger": ledger
     }
 
@@ -3988,18 +4152,10 @@ def export_report(
             scope
         )
 
-        if start:
-            query = query.filter(models.Transaction.date >= start)
-        if end:
-            query = query.filter(models.Transaction.date <= end)
-
-        txns = query.order_by(models.Transaction.date.asc()).all()
-        txns = filter_party_ledger_transactions(db, txns)
-        balance, ledger = build_ledger(db, txns)
+        opening_balance, balance, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
         rows = [
             {
-                "Party": party_row.name if party_row else party,
-                "Date": row["date"],
+                "Date": format_export_date(row["date"]),
                 "Type": row["type"],
                 "Bill No": row.get("bill_number", ""),
                 "Category": row["category"],
@@ -4014,9 +4170,8 @@ def export_report(
             for row in ledger
         ]
         rows.append({
-            "Party": party_row.name if party_row else party,
             "Date": "",
-            "Type": "TOTAL",
+            "Type": "Closing Balance",
             "Bill No": "",
             "Category": "",
             "Item": "",
@@ -4027,9 +4182,21 @@ def export_report(
             "Amount": "",
             "Balance": float(balance)
         })
-        columns = ["Party", "Date", "Type", "Bill No", "Category", "Item", "NAG", "KGS", "Rate", "Mode", "Amount", "Balance"]
+        period_label = "All Dates"
+        if start and end:
+            period_label = f"{format_export_date(start)} to {format_export_date(end)}"
+        elif start:
+            period_label = f"From {format_export_date(start)}"
+        elif end:
+            period_label = f"Up to {format_export_date(end)}"
+        columns = ["Date", "Type", "Bill No", "Category", "Item", "NAG", "KGS", "Rate", "Mode", "Amount", "Balance"]
         filename = safe_filename(f"ledger_{party}")
-        return report_response(rows, columns, filename, file_format, f"Ledger Report - {party}")
+        meta_rows = [
+            f"Party: {party_row.name if party_row else party}",
+            f"Period: {period_label}",
+            f"Opening Balance: {float(opening_balance):,.2f}",
+        ]
+        return report_response(rows, columns, filename, file_format, f"Ledger Report - {party}", meta_rows=meta_rows)
 
     if report_type == "summary":
         query = apply_outlet_scope(db.query(models.Transaction), models.Transaction, scope)
