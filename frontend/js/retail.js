@@ -102,6 +102,7 @@ function buildPaymentReceiptBridgePayload(receipt) {
       party_name: receipt.party_name || "",
       party_phone: receipt.party_phone || "",
       party_address: receipt.party_address || "",
+      old_balance: getPaymentReceiptOldBalanceValue(receipt),
       direction: receipt.direction || "RECEIVED",
       payment_mode: receipt.payment_mode || "Cash",
       amount: Number(receipt.amount || 0),
@@ -310,7 +311,7 @@ async function initRetailPage() {
     "paymentReceiptMode",
     "paymentReceiptPartyName",
     "paymentReceiptPartyPhone",
-    "paymentReceiptPartyAddress",
+    "paymentReceiptOldBalance",
     "paymentReceiptAmount",
     "paymentReceiptNotes"
   ];
@@ -636,9 +637,28 @@ function getCachedPartyProfile(name) {
   return retailPartyDirectoryCache.find(party => normalizeRetailPartyLookup(party.name) === normalized) || null;
 }
 
+function getPaymentReceiptOldBalanceValue(receipt = null) {
+  if (receipt && receipt.old_balance != null && receipt.old_balance !== "") {
+    return Number(receipt.old_balance || 0);
+  }
+  if (receipt && receipt.balance_after != null) {
+    return Number(receipt.balance_after || 0) + Number(receipt.amount || 0);
+  }
+  return getRetailPartyBalance("payment");
+}
+
+function syncPaymentReceiptOldBalanceField(value = null) {
+  const input = document.getElementById("paymentReceiptOldBalance");
+  if (!input) return;
+  input.value = formatBillMoney(Number(value != null ? value : getRetailPartyBalance("payment") || 0));
+}
+
 function setRetailPartyBalance(mode, value) {
   if (!retailPartyBalanceByMode[mode]) retailPartyBalanceByMode[mode] = 0;
   retailPartyBalanceByMode[mode] = Number(value || 0);
+  if (mode === "payment") {
+    syncPaymentReceiptOldBalanceField(retailPartyBalanceByMode[mode]);
+  }
 }
 
 function getRetailPartyBalance(mode) {
@@ -684,7 +704,7 @@ function resetLinkedRetailPartyFieldsIfNameChanged(mode = retailBillingMode) {
 function resetLinkedPaymentReceiptFieldsIfNameChanged() {
   const input = document.getElementById("paymentReceiptPartyName");
   const phoneInput = document.getElementById("paymentReceiptPartyPhone");
-  const addressInput = document.getElementById("paymentReceiptPartyAddress");
+  const oldBalanceInput = document.getElementById("paymentReceiptOldBalance");
   if (!input) return;
 
   const linkedName = input.dataset.linkedPartyName || "";
@@ -692,8 +712,9 @@ function resetLinkedPaymentReceiptFieldsIfNameChanged() {
   if (!linkedName || linkedName === currentName) return;
 
   if (phoneInput) phoneInput.value = "";
-  if (addressInput) addressInput.value = "";
-  clearLinkedPartyState(input, phoneInput, addressInput);
+  clearLinkedPartyState(input, phoneInput, null);
+  setRetailPartyBalance("payment", 0);
+  if (oldBalanceInput) oldBalanceInput.value = "";
   schedulePaymentReceiptPreviewRender();
 }
 
@@ -714,11 +735,10 @@ function applyPaymentReceiptPartyToFields(party) {
   if (!party) return;
   const input = document.getElementById("paymentReceiptPartyName");
   const phoneInput = document.getElementById("paymentReceiptPartyPhone");
-  const addressInput = document.getElementById("paymentReceiptPartyAddress");
   if (input) input.value = party.name || input.value;
   if (phoneInput) phoneInput.value = party.phone || "";
-  if (addressInput) addressInput.value = party.address || "";
-  storeLinkedPartyState(input, phoneInput, addressInput, party);
+  storeLinkedPartyState(input, phoneInput, null, party);
+  setRetailPartyBalance("payment", party.balance_after ?? party.party_balance ?? 0);
   schedulePaymentReceiptPreviewRender();
 }
 
@@ -1326,7 +1346,7 @@ function buildPaymentReceiptFromForm() {
     cashier_name: document.getElementById("paymentReceiptCashier")?.value.trim() || "admin",
     party_name: document.getElementById("paymentReceiptPartyName")?.value.trim() || "",
     party_phone: document.getElementById("paymentReceiptPartyPhone")?.value.trim() || "",
-    party_address: document.getElementById("paymentReceiptPartyAddress")?.value.trim() || "",
+    old_balance: getRetailPartyBalance("payment"),
     direction: document.getElementById("paymentReceiptDirection")?.value || "RECEIVED",
     payment_mode: document.getElementById("paymentReceiptMode")?.value || "Cash",
     amount: Number(document.getElementById("paymentReceiptAmount")?.value || 0),
@@ -1579,11 +1599,12 @@ function populatePaymentReceiptForm(receipt) {
   document.getElementById("paymentReceiptCashier").value = receipt.cashier_name || "admin";
   document.getElementById("paymentReceiptPartyName").value = receipt.party_name || "";
   document.getElementById("paymentReceiptPartyPhone").value = receipt.party_phone || "";
-  document.getElementById("paymentReceiptPartyAddress").value = receipt.party_address || "";
   document.getElementById("paymentReceiptDirection").value = receipt.direction || "RECEIVED";
   document.getElementById("paymentReceiptMode").value = receipt.payment_mode || "Cash";
   document.getElementById("paymentReceiptAmount").value = receipt.amount ?? "";
   document.getElementById("paymentReceiptNotes").value = receipt.notes || "";
+  setRetailPartyBalance("payment", getPaymentReceiptOldBalanceValue(receipt));
+  syncPaymentReceiptOldBalanceField(getPaymentReceiptOldBalanceValue(receipt));
 
   currentPaymentReceipt = receipt;
   paymentReceiptDraftDirty = false;
@@ -2099,11 +2120,13 @@ async function printCurrentPaymentReceipt() {
 
 function getPaymentReceiptShareText(receipt) {
   const directionLabel = (receipt.direction || "RECEIVED") === "PAID" ? "Amount Paid" : "Amount Received";
+  const oldBalance = getPaymentReceiptOldBalanceValue(receipt);
   const lines = [
     RETAIL_SHOP_PROFILE.name,
     `Receipt No: ${receipt.receipt_number}`,
     `Date: ${formatDisplayDate(receipt.date)}`,
     `Party: ${receipt.party_name || ""}`,
+    `Old Balance: Rs ${formatBillMoney(oldBalance)}`,
     `${directionLabel}: Rs ${formatBillMoney(receipt.amount)}`,
     `Mode: ${receipt.payment_mode || "Cash"}`,
     `Balance After Payment: Rs ${formatBillMoney(receipt.balance_after)}`
@@ -2191,17 +2214,19 @@ async function sendCurrentPaymentReceipt() {
 function resetPaymentReceiptForm() {
   const paymentName = document.getElementById("paymentReceiptPartyName");
   const paymentPhone = document.getElementById("paymentReceiptPartyPhone");
-  const paymentAddress = document.getElementById("paymentReceiptPartyAddress");
+  const paymentOldBalance = document.getElementById("paymentReceiptOldBalance");
   paymentName.value = "";
   paymentPhone.value = "";
-  paymentAddress.value = "";
-  clearLinkedPartyState(paymentName, paymentPhone, paymentAddress);
+  if (paymentOldBalance) paymentOldBalance.value = "";
+  clearLinkedPartyState(paymentName, paymentPhone, null);
   document.getElementById("paymentReceiptAmount").value = "";
   document.getElementById("paymentReceiptNotes").value = "";
   document.getElementById("paymentReceiptDirection").value = "RECEIVED";
   document.getElementById("paymentReceiptMode").value = "Cash";
   document.getElementById("paymentReceiptCashier").value = "admin";
   document.getElementById("paymentReceiptDate").value = formatDateInput(new Date());
+  setRetailPartyBalance("payment", 0);
+  if (paymentOldBalance) paymentOldBalance.value = "";
   currentPaymentReceipt = null;
   paymentReceiptDraftDirty = false;
   paymentReceiptCompleted = false;
@@ -2436,10 +2461,9 @@ async function hydratePaymentReceiptPartyProfile(name) {
     const cachedParty = getCachedPartyProfile(query);
     if (cachedParty) {
       const phoneInput = document.getElementById("paymentReceiptPartyPhone");
-      const addressInput = document.getElementById("paymentReceiptPartyAddress");
       if (phoneInput) phoneInput.value = cachedParty.phone || "";
-      if (addressInput) addressInput.value = cachedParty.address || "";
-      storeLinkedPartyState(document.getElementById("paymentReceiptPartyName"), phoneInput, addressInput, cachedParty);
+      storeLinkedPartyState(document.getElementById("paymentReceiptPartyName"), phoneInput, null, cachedParty);
+      setRetailPartyBalance("payment", cachedParty.balance_after ?? cachedParty.party_balance ?? 0);
       schedulePaymentReceiptPreviewRender();
       return;
     }
@@ -2449,10 +2473,9 @@ async function hydratePaymentReceiptPartyProfile(name) {
     if (!party) return;
 
     const phoneInput = document.getElementById("paymentReceiptPartyPhone");
-    const addressInput = document.getElementById("paymentReceiptPartyAddress");
     if (phoneInput) phoneInput.value = party.phone || "";
-    if (addressInput) addressInput.value = party.address || "";
-    storeLinkedPartyState(document.getElementById("paymentReceiptPartyName"), phoneInput, addressInput, party);
+    storeLinkedPartyState(document.getElementById("paymentReceiptPartyName"), phoneInput, null, party);
+    setRetailPartyBalance("payment", party.balance_after ?? party.party_balance ?? 0);
     schedulePaymentReceiptPreviewRender();
   } catch (e) {
     console.error(e);
@@ -2772,11 +2795,12 @@ function getRetailReceiptMarkup(bill) {
 function getPaymentReceiptMarkup(receipt) {
   const directionLabel = (receipt.direction || "RECEIVED") === "PAID" ? "Payment Voucher" : "Payment Receipt";
   const amountLabel = (receipt.direction || "RECEIVED") === "PAID" ? "Amount Paid" : "Amount Received";
-  const partyBlock = (receipt.party_name || receipt.party_phone || receipt.party_address) ? `
+  const oldBalance = getPaymentReceiptOldBalanceValue(receipt);
+  const partyBlock = (receipt.party_name || receipt.party_phone || oldBalance) ? `
     <div class="thermal-customer">
       ${receipt.party_name ? `<p><strong>Party Name</strong> : ${escapeHtml(receipt.party_name)}</p>` : ""}
       ${receipt.party_phone ? `<p><strong>Phone</strong> : ${escapeHtml(receipt.party_phone)}</p>` : ""}
-      ${receipt.party_address ? `<p><strong>Address</strong> : ${escapeHtml(receipt.party_address)}</p>` : ""}
+      <p><strong>Old Balance</strong> : ${formatBillMoney(oldBalance)}</p>
     </div>
   ` : "";
 

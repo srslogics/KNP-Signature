@@ -1139,7 +1139,7 @@ function loadPage(page) {
                   </div>
                   <datalist id="paymentReceiptPartySuggestions"></datalist>
                   <input type="text" id="paymentReceiptPartyPhone" placeholder="Phone (optional)">
-                  <input type="text" id="paymentReceiptPartyAddress" placeholder="Address (optional)">
+                  <input type="text" id="paymentReceiptOldBalance" placeholder="Old Balance" readonly>
                   <input type="number" id="paymentReceiptAmount" placeholder="Amount" min="0" step="0.01">
                 </div>
 
