@@ -15,12 +15,24 @@ from sqlalchemy.orm import Session
 from app.db import SessionLocal
 from app import models
 from sqlalchemy import case, func, text, or_, and_, exists, cast, String
+from sqlalchemy.exc import OperationalError
 from decimal import Decimal
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 
 app = FastAPI()
+
+
+def safe_create_index(conn, sql: str):
+    try:
+        conn.execute(text(sql))
+    except OperationalError as e:
+        message = str(e).lower()
+        if "deadlock detected" in message:
+            print(f"Skipping index creation during startup due to transient deadlock: {sql}")
+            return
+        raise
 
 
 def current_shared_document_number(target_date, db: Session, outlet_id) -> str:
@@ -237,10 +249,10 @@ def ensure_database_schema():
             )
         """))
         conn.execute(text("ALTER TABLE retail_shortcuts ADD COLUMN IF NOT EXISTS source_item_type VARCHAR"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions (token)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions (user_id)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_document_number_counters_outlet_date ON document_number_counters (outlet_id, target_date)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_retail_shortcuts_outlet_line_type ON retail_shortcuts (outlet_id, line_type)"))
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions (token)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions (user_id)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_document_number_counters_outlet_date ON document_number_counters (outlet_id, target_date)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_retail_shortcuts_outlet_line_type ON retail_shortcuts (outlet_id, line_type)")
         conn.execute(text("ALTER TABLE transactions DROP CONSTRAINT IF EXISTS unique_txn"))
         conn.execute(text("""
             DO $$
@@ -256,17 +268,17 @@ def ensure_database_schema():
             END
             $$;
         """))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_transactions_date_type ON transactions (date, type)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_transactions_party_date ON transactions (party_id, date)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_transactions_item_date ON transactions (item_type, date)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_transactions_outlet_date ON transactions (outlet_id, date)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_party_alias_normalized ON party_aliases (normalized_alias)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_daily_stock_date ON daily_stock (date)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_retail_bills_date ON retail_bills (date)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_retail_bill_items_bill_id ON retail_bill_items (bill_id)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_payment_receipts_date ON payment_receipts (date)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_outlet_access_user ON user_outlet_access (user_id)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_outlet_access_outlet ON user_outlet_access (outlet_id)"))
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_transactions_date_type ON transactions (date, type)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_transactions_party_date ON transactions (party_id, date)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_transactions_item_date ON transactions (item_type, date)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_transactions_outlet_date ON transactions (outlet_id, date)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_party_alias_normalized ON party_aliases (normalized_alias)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_daily_stock_date ON daily_stock (date)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_retail_bills_date ON retail_bills (date)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_retail_bill_items_bill_id ON retail_bill_items (bill_id)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_payment_receipts_date ON payment_receipts (date)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_user_outlet_access_user ON user_outlet_access (user_id)")
+        safe_create_index(conn, "CREATE INDEX IF NOT EXISTS idx_user_outlet_access_outlet ON user_outlet_access (outlet_id)")
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS item_opening_stock (
                 id UUID PRIMARY KEY,
