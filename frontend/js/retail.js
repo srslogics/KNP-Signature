@@ -637,6 +637,13 @@ function getCachedPartyProfile(name) {
   return retailPartyDirectoryCache.find(party => normalizeRetailPartyLookup(party.name) === normalized) || null;
 }
 
+function partyHasResolvedBalance(party) {
+  return party && (
+    party.balance_after != null ||
+    party.party_balance != null
+  );
+}
+
 function getPaymentReceiptOldBalanceValue(receipt = null) {
   if (receipt && receipt.old_balance != null && receipt.old_balance !== "") {
     return Number(receipt.old_balance || 0);
@@ -740,6 +747,19 @@ function applyPaymentReceiptPartyToFields(party) {
   storeLinkedPartyState(input, phoneInput, null, party);
   setRetailPartyBalance("payment", party.balance_after ?? party.party_balance ?? 0);
   schedulePaymentReceiptPreviewRender();
+}
+
+async function fetchRetailPartyProfile(name) {
+  const query = String(name || "").trim();
+  if (query.length < 2) return null;
+  const data = await optionalApiCall(`/party/profile?name=${encodeURIComponent(query)}`, null, "GET", null, { cache: false });
+  const party = data?.party;
+  if (!party) return null;
+  retailPartyDirectoryCache = retailPartyDirectoryCache.filter(
+    existing => normalizeRetailPartyLookup(existing.name) !== normalizeRetailPartyLookup(party.name)
+  );
+  retailPartyDirectoryCache.push(party);
+  return party;
 }
 
 function renderRetailPartyMatches(boxId, suggestions, parties, onPick) {
@@ -2338,8 +2358,9 @@ function suggestRetailCustomers(mode = retailBillingMode) {
     applyRetailPartyToFields(exactParty, mode);
   }
   if (cachedMatches.length) {
-    renderRetailPartyMatches("retailCustomerSuggestBox", suggestions, cachedMatches, party => {
+    renderRetailPartyMatches("retailCustomerSuggestBox", suggestions, cachedMatches, async party => {
       applyRetailPartyToFields(party, mode);
+      await hydrateRetailCustomerProfile(party?.name || "", mode);
       hideSuggestionBox("retailCustomerSuggestBox");
     });
   }
@@ -2354,8 +2375,9 @@ function suggestRetailCustomers(mode = retailBillingMode) {
       if (!exactParty && remoteExactParty) {
         applyRetailPartyToFields(remoteExactParty, mode);
       }
-      renderRetailPartyMatches("retailCustomerSuggestBox", suggestions, mergedMatches, party => {
+      renderRetailPartyMatches("retailCustomerSuggestBox", suggestions, mergedMatches, async party => {
         applyRetailPartyToFields(party, mode);
+        await hydrateRetailCustomerProfile(party?.name || "", mode);
         hideSuggestionBox("retailCustomerSuggestBox");
       });
     } catch (e) {
@@ -2385,8 +2407,9 @@ function suggestPaymentReceiptParties() {
     applyPaymentReceiptPartyToFields(exactParty);
   }
   if (cachedMatches.length) {
-    renderRetailPartyMatches("paymentReceiptPartySuggestBox", suggestions, cachedMatches, party => {
+    renderRetailPartyMatches("paymentReceiptPartySuggestBox", suggestions, cachedMatches, async party => {
       applyPaymentReceiptPartyToFields(party);
+      await hydratePaymentReceiptPartyProfile(party?.name || "");
       hideSuggestionBox("paymentReceiptPartySuggestBox");
     });
   }
@@ -2401,8 +2424,9 @@ function suggestPaymentReceiptParties() {
       if (!exactParty && remoteExactParty) {
         applyPaymentReceiptPartyToFields(remoteExactParty);
       }
-      renderRetailPartyMatches("paymentReceiptPartySuggestBox", suggestions, mergedMatches, party => {
+      renderRetailPartyMatches("paymentReceiptPartySuggestBox", suggestions, mergedMatches, async party => {
         applyPaymentReceiptPartyToFields(party);
+        await hydratePaymentReceiptPartyProfile(party?.name || "");
         hideSuggestionBox("paymentReceiptPartySuggestBox");
       });
     } catch (e) {
@@ -2419,7 +2443,10 @@ async function hydrateRetailCustomerProfile(name, mode = retailBillingMode) {
 
   try {
     await ensureRetailPartyDirectoryLoaded();
-    const cachedParty = getCachedPartyProfile(query);
+    let cachedParty = getCachedPartyProfile(query);
+    if (cachedParty && !partyHasResolvedBalance(cachedParty)) {
+      cachedParty = await fetchRetailPartyProfile(query) || cachedParty;
+    }
     if (cachedParty) {
       const phoneInput = retailField(mode, "customerPhone");
       const addressInput = retailField(mode, "customerAddress");
@@ -2431,14 +2458,8 @@ async function hydrateRetailCustomerProfile(name, mode = retailBillingMode) {
       return;
     }
 
-    const data = await optionalApiCall(`/party/profile?name=${encodeURIComponent(query)}`, null, "GET", null, { cache: false });
-    const party = data?.party;
+    const party = await fetchRetailPartyProfile(query);
     if (!party) return;
-
-    retailPartyDirectoryCache = retailPartyDirectoryCache.filter(
-      existing => normalizeRetailPartyLookup(existing.name) !== normalizeRetailPartyLookup(party.name)
-    );
-    retailPartyDirectoryCache.push(party);
 
     const phoneInput = retailField(mode, "customerPhone");
     const addressInput = retailField(mode, "customerAddress");
@@ -2458,7 +2479,10 @@ async function hydratePaymentReceiptPartyProfile(name) {
 
   try {
     await ensureRetailPartyDirectoryLoaded();
-    const cachedParty = getCachedPartyProfile(query);
+    let cachedParty = getCachedPartyProfile(query);
+    if (cachedParty && !partyHasResolvedBalance(cachedParty)) {
+      cachedParty = await fetchRetailPartyProfile(query) || cachedParty;
+    }
     if (cachedParty) {
       const phoneInput = document.getElementById("paymentReceiptPartyPhone");
       if (phoneInput) phoneInput.value = cachedParty.phone || "";
@@ -2468,8 +2492,7 @@ async function hydratePaymentReceiptPartyProfile(name) {
       return;
     }
 
-    const data = await optionalApiCall(`/party/profile?name=${encodeURIComponent(query)}`, null, "GET", null, { cache: false });
-    const party = data?.party;
+    const party = await fetchRetailPartyProfile(query);
     if (!party) return;
 
     const phoneInput = document.getElementById("paymentReceiptPartyPhone");
