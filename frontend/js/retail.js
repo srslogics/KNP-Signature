@@ -2030,7 +2030,54 @@ function getRetailBillShareText(bill) {
   return lines.join("\n");
 }
 
+function normalizeRetailWhatsAppPhoneNumber(value) {
+  const candidates = String(value || "")
+    .split(/[\/,;|]+/)
+    .map(part => part.replace(/\D/g, ""))
+    .filter(Boolean);
+  let digits = candidates.find(number => number.length >= 10 && number.length <= 15) || "";
+
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+  if (digits.length === 10) digits = `91${digits}`;
+
+  return digits.length >= 11 && digits.length <= 15 ? digits : "";
+}
+
+function openRetailWhatsAppConversation(phone, message, pendingWindow = null) {
+  const normalizedPhone = normalizeRetailWhatsAppPhoneNumber(phone);
+  if (!normalizedPhone) {
+    if (pendingWindow && !pendingWindow.closed) pendingWindow.close();
+    showToast("Valid WhatsApp number not found for this party");
+    return false;
+  }
+
+  const target = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(message)}`;
+  if (pendingWindow && !pendingWindow.closed) {
+    pendingWindow.opener = null;
+    pendingWindow.location.replace(target);
+  } else {
+    window.location.href = target;
+  }
+  return true;
+}
+
+async function resolveRetailWhatsAppPhone(partyName, currentPhone) {
+  if (normalizeRetailWhatsAppPhoneNumber(currentPhone)) return currentPhone;
+  const name = String(partyName || "").trim();
+  if (name.length < 2) return currentPhone || "";
+
+  try {
+    const party = await fetchRetailPartyProfile(name);
+    return party?.phone || currentPhone || "";
+  } catch (error) {
+    console.error("WhatsApp party phone lookup failed", error);
+    return currentPhone || "";
+  }
+}
+
 async function sendCurrentRetailBill() {
+  const pendingWindow = window.open("about:blank", "_blank");
   let bill = currentRetailBill;
 
   if (!bill || retailDraftDirty || !isCurrentRetailBillForActiveMode()) {
@@ -2038,61 +2085,13 @@ async function sendCurrentRetailBill() {
   }
 
   if (!bill || !(bill.items || []).length) {
+    if (pendingWindow && !pendingWindow.closed) pendingWindow.close();
     showToast("No bill ready to send");
     return;
   }
 
   const shareText = getRetailBillShareText(bill);
-  const customerPhone = String(bill.customer_phone || "").replace(/\D/g, "");
-  const markup = getRetailReceiptMarkup(bill);
-
-  try {
-    const imageFile = await renderReceiptMarkupToPngFile(markup, `retail-bill-${bill.bill_number}`);
-    if (navigator.canShare && navigator.share && navigator.canShare({ files: [imageFile] })) {
-      await navigator.share({
-        title: `Retail Bill ${bill.bill_number}`,
-        text: shareText,
-        files: [imageFile]
-      });
-      showToast("Bill image shared");
-      startNextRetailBill();
-      return;
-    }
-
-    downloadFile(imageFile);
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(shareText);
-      } catch (e) {
-        console.error("Clipboard copy failed", e);
-      }
-    }
-    const whatsappTarget = customerPhone
-      ? `https://wa.me/${customerPhone}?text=${encodeURIComponent(shareText)}`
-      : `https://wa.me/?text=${encodeURIComponent(shareText)}`;
-    window.open(whatsappTarget, "_blank", "noopener,noreferrer");
-    showToast("Receipt image downloaded. Attach it in WhatsApp.");
-    startNextRetailBill();
-    return;
-  } catch (e) {
-    console.error("Image share failed", e);
-  }
-
-  try {
-    if (navigator.share) {
-      await navigator.share({
-        title: `Retail Bill ${bill.bill_number}`,
-        text: shareText
-      });
-      showToast("Bill shared");
-      startNextRetailBill();
-      return;
-    }
-  } catch (e) {
-    if (e?.name !== "AbortError") {
-      console.error(e);
-    }
-  }
+  const customerPhone = await resolveRetailWhatsAppPhone(bill.customer_name, bill.customer_phone);
 
   if (navigator.clipboard?.writeText) {
     try {
@@ -2102,10 +2101,10 @@ async function sendCurrentRetailBill() {
     }
   }
 
-  const whatsappTarget = customerPhone ? `https://wa.me/${customerPhone}?text=${encodeURIComponent(shareText)}` : `https://wa.me/?text=${encodeURIComponent(shareText)}`;
-  window.open(whatsappTarget, "_blank", "noopener,noreferrer");
-  showToast(customerPhone ? "Bill copied and WhatsApp opened" : "Bill text copied. Add receiver and send");
-  startNextRetailBill();
+  if (openRetailWhatsAppConversation(customerPhone, shareText, pendingWindow)) {
+    showToast("WhatsApp opened for this party");
+    startNextRetailBill();
+  }
 }
 
 async function printCurrentPaymentReceipt() {
@@ -2157,65 +2156,20 @@ function getPaymentReceiptShareText(receipt) {
 }
 
 async function sendCurrentPaymentReceipt() {
+  const pendingWindow = window.open("about:blank", "_blank");
   let receipt = currentPaymentReceipt;
   if (!receipt || paymentReceiptDraftDirty) {
     receipt = await savePaymentReceipt({ autoStartNext: false });
   }
 
   if (!receipt || Number(receipt.amount || 0) <= 0) {
+    if (pendingWindow && !pendingWindow.closed) pendingWindow.close();
     showToast("No payment receipt ready to send");
     return;
   }
 
   const shareText = getPaymentReceiptShareText(receipt);
-  const partyPhone = String(receipt.party_phone || "").replace(/\D/g, "");
-  const markup = getPaymentReceiptMarkup(receipt);
-
-  try {
-    const imageFile = await renderReceiptMarkupToPngFile(markup, `payment-receipt-${receipt.receipt_number}`);
-    if (navigator.canShare && navigator.share && navigator.canShare({ files: [imageFile] })) {
-      await navigator.share({
-        title: `Payment Receipt ${receipt.receipt_number}`,
-        text: `Payment receipt ${receipt.receipt_number}`,
-        files: [imageFile]
-      });
-      showToast("Payment receipt image shared");
-      startNextPaymentReceipt();
-      return;
-    }
-
-    downloadFile(imageFile);
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(shareText);
-      } catch (e) {
-        console.error("Clipboard copy failed", e);
-      }
-    }
-    const whatsappTarget = partyPhone ? `https://wa.me/${partyPhone}` : `https://wa.me/`;
-    window.open(whatsappTarget, "_blank", "noopener,noreferrer");
-    showToast("Receipt image downloaded. Attach it in WhatsApp.");
-    startNextPaymentReceipt();
-    return;
-  } catch (e) {
-    console.error("Payment receipt image share failed", e);
-  }
-
-  try {
-    if (navigator.share) {
-      await navigator.share({
-        title: `Payment Receipt ${receipt.receipt_number}`,
-        text: shareText
-      });
-      showToast("Payment receipt shared");
-      startNextPaymentReceipt();
-      return;
-    }
-  } catch (e) {
-    if (e?.name !== "AbortError") {
-      console.error(e);
-    }
-  }
+  const partyPhone = await resolveRetailWhatsAppPhone(receipt.party_name, receipt.party_phone);
 
   if (navigator.clipboard?.writeText) {
     try {
@@ -2225,10 +2179,10 @@ async function sendCurrentPaymentReceipt() {
     }
   }
 
-  const whatsappTarget = partyPhone ? `https://wa.me/${partyPhone}?text=${encodeURIComponent(shareText)}` : `https://wa.me/?text=${encodeURIComponent(shareText)}`;
-  window.open(whatsappTarget, "_blank", "noopener,noreferrer");
-  showToast(partyPhone ? "Payment receipt copied and WhatsApp opened" : "Receipt text copied. Add receiver and send");
-  startNextPaymentReceipt();
+  if (openRetailWhatsAppConversation(partyPhone, shareText, pendingWindow)) {
+    showToast("WhatsApp opened for this party");
+    startNextPaymentReceipt();
+  }
 }
 
 function resetPaymentReceiptForm() {

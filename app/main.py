@@ -1547,51 +1547,172 @@ def format_export_date(value):
         return str(value)
 
 
+def pdf_format_value(column, value):
+    if value in [None, ""]:
+        return ""
+    if isinstance(value, Decimal):
+        value = float(value)
+    if isinstance(value, (int, float)):
+        if column in ["Amount", "Balance", "Rate", "Sales", "Purchase", "Profit", "Payment Received", "Payment Paid", "Opening", "Receivable", "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total"]:
+            return f"Rs {value:,.2f}"
+        if column in ["KGS", "Kg", "Opening Kg", "Purchase Kg", "Sales Kg", "Expected Kg", "Actual Kg", "Leakage Kg", "Weight"]:
+            return f"{value:,.3f}"
+        if column in ["NAG", "Nag"]:
+            return f"{value:,.0f}"
+    return str(value)
+
+
+def pdf_fit_text(value, width, font_size):
+    text = str(value or "")
+    approx_char_width = max(font_size * 0.52, 1)
+    max_chars = max(int(width / approx_char_width), 1)
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= 3:
+        return text[:max_chars]
+    return text[:max_chars - 3] + "..."
+
+
+def pdf_column_widths(columns, usable_width):
+    weights = {
+        "Date": 1.2,
+        "Type": 1.3,
+        "Bill No": 0.9,
+        "Category": 1.5,
+        "Item": 1.2,
+        "NAG": 0.7,
+        "KGS": 0.9,
+        "Rate": 0.9,
+        "Mode": 0.9,
+        "Amount": 1.1,
+        "Balance": 1.1,
+    }
+    raw = [weights.get(column, 1.0) for column in columns]
+    total = sum(raw) or 1
+    return [(weight / total) * usable_width for weight in raw]
+
+
+def pdf_text_line(x, y, text, font="F1", size=9, color=(0.18, 0.14, 0.10)):
+    return f"BT /{font} {size} Tf {color[0]:.3f} {color[1]:.3f} {color[2]:.3f} rg 1 0 0 1 {x:.2f} {y:.2f} Tm ({pdf_escape(text)}) Tj ET"
+
+
+def pdf_rect(x, y, width, height, fill=None, stroke=None, line_width=0.6):
+    ops = []
+    if fill:
+        ops.append(f"{fill[0]:.3f} {fill[1]:.3f} {fill[2]:.3f} rg")
+    if stroke:
+        ops.append(f"{stroke[0]:.3f} {stroke[1]:.3f} {stroke[2]:.3f} RG")
+        ops.append(f"{line_width:.2f} w")
+    paint = "B" if fill and stroke else ("f" if fill else "S")
+    ops.append(f"{x:.2f} {y:.2f} {width:.2f} {height:.2f} re {paint}")
+    return "\n".join(ops)
+
+
 def build_simple_pdf(title, columns, rows, meta_rows=None):
-    lines = [title, ""]
-    for meta in meta_rows or []:
-        lines.append(meta)
-    if meta_rows:
-        lines.append("")
-    lines.append(" | ".join(columns))
-    lines.append("-" * min(110, max(24, len(lines[-1]))))
-
-    for row in rows:
-        lines.append(" | ".join(str(row.get(column, "")) for column in columns))
-
-    if not rows:
-        lines.append("No records found")
-
-    pages = []
-    chunk_size = 42
-    for index in range(0, len(lines), chunk_size):
-        pages.append(lines[index:index + chunk_size])
+    landscape = len(columns) > 8
+    page_width, page_height = (842, 595) if landscape else (595, 842)
+    margin_x = 24
+    margin_top = 26
+    margin_bottom = 24
+    usable_width = page_width - (margin_x * 2)
+    row_height = 18
+    header_height = 20
+    title_gap = 26
+    meta_gap = 18
+    font_size = 7 if landscape else 8
+    col_widths = pdf_column_widths(columns, usable_width)
+    number_columns = {"Amount", "Balance", "Rate", "Sales", "Purchase", "Profit", "Payment Received", "Payment Paid", "Opening", "Receivable", "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total", "KGS", "Kg", "Opening Kg", "Purchase Kg", "Sales Kg", "Expected Kg", "Actual Kg", "Leakage Kg", "Weight", "NAG", "Nag"}
 
     objects = {
         1: "<< /Type /Catalog /Pages 2 0 R >>",
-        3: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+        3: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
     }
     page_refs = []
-    next_ref = 4
+    next_ref = 5
 
-    for page in pages:
-        content = ["BT", "/F1 9 Tf", "42 790 Td", "12 TL"]
-        for line in page:
-            content.append(f"({pdf_escape(line[:150])}) Tj")
-            content.append("T*")
-        content.append("ET")
-        stream = "\n".join(content)
-        content_ref = next_ref
-        objects[content_ref] = f"<< /Length {len(stream.encode('latin-1'))} >>\nstream\n{stream}\nendstream"
-        next_ref += 1
+    def draw_header(commands, y):
+        x = margin_x
+        for index, column in enumerate(columns):
+            width = col_widths[index]
+            commands.append(pdf_rect(x, y - header_height, width, header_height, fill=(0.929, 0.906, 0.859), stroke=(0.839, 0.780, 0.682)))
+            commands.append(pdf_text_line(x + 4, y - 13, pdf_fit_text(column, width - 8, 8), font="F2", size=8, color=(0.29, 0.23, 0.15)))
+            x += width
+        return y - header_height
 
-        page_ref = next_ref
-        objects[page_ref] = (
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-            f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_ref} 0 R >>"
-        )
-        next_ref += 1
-        page_refs.append(page_ref)
+    def new_page(first_page=False):
+        commands = []
+        y = page_height - margin_top
+        commands.append(pdf_rect(margin_x, y - 18, usable_width, 18, fill=(0.969, 0.949, 0.910), stroke=(0.839, 0.780, 0.682), line_width=0.8))
+        commands.append(pdf_text_line(margin_x + 6, y - 13, title, font="F2", size=12, color=(0.20, 0.15, 0.10)))
+        y -= title_gap
+
+        if first_page:
+            for meta in meta_rows or []:
+                commands.append(pdf_rect(margin_x, y - 14, usable_width, 14, fill=(0.984, 0.973, 0.945), stroke=None))
+                commands.append(pdf_text_line(margin_x + 4, y - 10, pdf_fit_text(meta, usable_width - 8, 8), font="F2", size=8, color=(0.28, 0.22, 0.14)))
+                y -= meta_gap
+            if meta_rows:
+                y -= 6
+
+        y = draw_header(commands, y)
+        return commands, y
+
+    if not rows:
+        rows = [{column: ("No records found" if index == 0 else "") for index, column in enumerate(columns)}]
+
+    page_index = 0
+    commands, current_y = new_page(first_page=True)
+    page_index += 1
+
+    for row in rows:
+        if current_y - row_height < margin_bottom:
+            page_ref = next_ref + 1
+            stream = "\n".join(commands)
+            content_ref = next_ref
+            objects[content_ref] = f"<< /Length {len(stream.encode('latin-1', errors='replace'))} >>\nstream\n{stream}\nendstream"
+            next_ref += 1
+            objects[page_ref] = (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] "
+                f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_ref} 0 R >>"
+            )
+            next_ref += 1
+            page_refs.append(page_ref)
+            commands, current_y = new_page(first_page=False)
+            page_index += 1
+
+        row_label = str(row.get("Type", "") or row.get(columns[0], "")).strip().lower() if columns else ""
+        is_summary_row = row_label in ["closing balance", "total"]
+        is_alt_row = (len(page_refs) + len(commands)) % 2 == 0
+        fill = (0.953, 0.886, 0.745) if is_summary_row else ((0.988, 0.980, 0.961) if is_alt_row else None)
+        stroke = (0.788, 0.659, 0.416) if is_summary_row else (0.839, 0.780, 0.682)
+        x = margin_x
+        for index, column in enumerate(columns):
+            width = col_widths[index]
+            commands.append(pdf_rect(x, current_y - row_height, width, row_height, fill=fill, stroke=stroke, line_width=0.8 if is_summary_row else 0.5))
+            display = pdf_format_value(column, row.get(column, ""))
+            fitted = pdf_fit_text(display, width - 8, font_size)
+            if column in number_columns:
+                approx_width = len(fitted) * font_size * 0.50
+                text_x = max(x + 4, x + width - approx_width - 4)
+            else:
+                text_x = x + 4
+            color = (0.66, 0.27, 0.26) if column in ["Amount", "Balance"] and str(display).startswith("Rs -") else (0.20, 0.15, 0.10)
+            commands.append(pdf_text_line(text_x, current_y - 12, fitted, font="F2" if is_summary_row else "F1", size=font_size, color=color))
+            x += width
+        current_y -= row_height
+
+    stream = "\n".join(commands)
+    content_ref = next_ref
+    objects[content_ref] = f"<< /Length {len(stream.encode('latin-1', errors='replace'))} >>\nstream\n{stream}\nendstream"
+    next_ref += 1
+    page_ref = next_ref
+    objects[page_ref] = (
+        f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] "
+        f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_ref} 0 R >>"
+    )
+    next_ref += 1
+    page_refs.append(page_ref)
 
     objects[2] = (
         "<< /Type /Pages /Kids ["
