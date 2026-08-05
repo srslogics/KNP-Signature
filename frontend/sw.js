@@ -1,24 +1,22 @@
-const SHELL_CACHE = "knp-shell-v20260805-5";
-const STATIC_CACHE = "knp-static-v20260805-5";
+const SHELL_CACHE = "knp-shell-v20260803-1";
+const STATIC_CACHE = "knp-static-v20260803-1";
 
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./css/style.css?v=20260805-5",
-  "./js/api.js?v=20260805-1",
-  "./js/app.js?v=20260805-5",
-  "./js/upload.js?v=20260805-1",
-  "./js/dashboard.js?v=20260805-1",
-  "./js/ledger.js?v=20260805-1",
-  "./js/analytics.js?v=20260805-1",
-  "./js/retail.js?v=20260805-1",
-  "./js/daily-sheet.js?v=20260805-1",
-  "./js/reports.js?v=20260805-1",
-  "./js/control.js?v=20260805-1",
-  "./js/finance.js?v=20260805-5",
+  "./css/style.css?v=20260803-1",
+  "./js/api.js?v=20260803-1",
+  "./js/app.js?v=20260803-1",
+  "./js/upload.js?v=20260803-1",
+  "./js/dashboard.js?v=20260803-1",
+  "./js/ledger.js?v=20260803-1",
+  "./js/analytics.js?v=20260803-1",
+  "./js/retail.js?v=20260803-1",
+  "./js/daily-sheet.js?v=20260803-1",
+  "./js/reports.js?v=20260803-1",
   "./assets/srs-logics-logo-small.png?v=20260515-1",
   "./assets/srs-logics-logo.png?v=20260515-1",
-  "./manifest.webmanifest?v=20260805-1"
+  "./manifest.webmanifest?v=20260803-1"
 ];
 
 self.addEventListener("install", event => {

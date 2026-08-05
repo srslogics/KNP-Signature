@@ -1493,7 +1493,6 @@ function populateRetailFormFromBill(bill) {
   currentRetailBill = bill;
   retailDraftDirty = false;
   retailBillCompleted = true;
-  syncVoidActionButtons();
   setRetailBillingMode(isCombinedRetailBillingPage() ? "regular" : (billMode === "both" ? "regular" : billMode));
   renderRetailPreview(currentRetailBill);
 }
@@ -1630,7 +1629,6 @@ function populatePaymentReceiptForm(receipt) {
   currentPaymentReceipt = receipt;
   paymentReceiptDraftDirty = false;
   paymentReceiptCompleted = true;
-  syncVoidActionButtons();
   setRetailBillingMode("payment");
   renderPaymentReceiptPreview(currentPaymentReceipt);
 }
@@ -1724,7 +1722,7 @@ async function loadPaymentReceipts(force = false) {
         <td>${escapeHtml(receipt.direction || "RECEIVED")}</td>
         <td>${escapeHtml(receipt.payment_mode || "Cash")}</td>
         <td>${formatBillMoney(receipt.amount)}</td>
-        <td><button type="button" onclick="openPaymentReceipt('${receipt.id}')">${receipt.status === "VOID" ? "View Void" : "Open"}</button></td>
+        <td><button type="button" onclick="openPaymentReceipt('${receipt.id}')">Open</button></td>
       `;
       body.appendChild(row);
     });
@@ -1791,7 +1789,7 @@ async function loadRetailBills(force = false) {
         <td>${formatBillMoney(bill.total_amount)}</td>
         <td>${formatBillMoney(bill.paid_amount)}</td>
         <td>${formatBillMoney(bill.outstanding_amount)}</td>
-        <td><button type="button" onclick="openRetailBill('${bill.id}')">${bill.status === "VOID" ? "View Void" : "Open"}</button></td>
+        <td><button type="button" onclick="openRetailBill('${bill.id}')">Open</button></td>
       `;
       body.appendChild(row);
     });
@@ -1929,60 +1927,6 @@ async function openRetailBill(billId) {
   } catch (e) {
     console.error(e);
     showToast("Unable to open retail bill");
-  }
-}
-
-function syncVoidActionButtons() {
-  const canVoid = typeof isOwner === "function" && isOwner();
-  const billButton = document.getElementById("retailVoidButton");
-  const receiptButton = document.getElementById("paymentReceiptVoidButton");
-  if (billButton) {
-    billButton.style.display = canVoid && currentRetailBill?.id && currentRetailBill.status !== "VOID" ? "" : "none";
-  }
-  if (receiptButton) {
-    receiptButton.style.display = canVoid && currentPaymentReceipt?.id && currentPaymentReceipt.status !== "VOID" ? "" : "none";
-  }
-}
-
-async function voidCurrentRetailBill() {
-  if (!currentRetailBill?.id || String(currentRetailBill.id).startsWith("local-")) return;
-  const reason = window.prompt("Reason for cancelling this bill:", "");
-  if (reason === null) return;
-  if (reason.trim().length < 3) return showToast("Enter a clear cancellation reason");
-  try {
-    const data = await apiCall(
-      `/retail-bills/${currentRetailBill.id}/void`,
-      "POST",
-      JSON.stringify({ reason: reason.trim() }),
-      { "Content-Type": "application/json" }
-    );
-    if (data.error) return showToast(data.error);
-    showToast(data.message || "Bill cancelled");
-    resetRetailForm();
-    await loadRetailBills(true);
-  } catch (error) {
-    showToast(error.message || "Bill could not be cancelled");
-  }
-}
-
-async function voidCurrentPaymentReceipt() {
-  if (!currentPaymentReceipt?.id) return;
-  const reason = window.prompt("Reason for cancelling this receipt:", "");
-  if (reason === null) return;
-  if (reason.trim().length < 3) return showToast("Enter a clear cancellation reason");
-  try {
-    const data = await apiCall(
-      `/payment-receipts/${currentPaymentReceipt.id}/void`,
-      "POST",
-      JSON.stringify({ reason: reason.trim() }),
-      { "Content-Type": "application/json" }
-    );
-    if (data.error) return showToast(data.error);
-    showToast(data.message || "Receipt cancelled");
-    resetPaymentReceiptForm();
-    await loadPaymentReceipts(true);
-  } catch (error) {
-    showToast(error.message || "Receipt could not be cancelled");
   }
 }
 
@@ -2260,7 +2204,6 @@ function resetPaymentReceiptForm() {
   currentPaymentReceipt = null;
   paymentReceiptDraftDirty = false;
   paymentReceiptCompleted = false;
-  syncVoidActionButtons();
   refreshPaymentReceiptNumber();
   if (retailBillingMode === "payment") {
     schedulePaymentReceiptPreviewRender();
@@ -2308,7 +2251,6 @@ function resetRetailForm() {
   currentRetailBill = null;
   retailDraftDirty = false;
   retailBillCompleted = false;
-  syncVoidActionButtons();
   renderRetailOfflineBanner();
   refreshRetailBillNumber();
   scheduleRetailPreviewRender();

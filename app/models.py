@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Boolean, Column, Date, ForeignKey, Integer, JSON, Numeric, String, TIMESTAMP, UniqueConstraint
+from sqlalchemy import Column, String, Date, Numeric, ForeignKey, TIMESTAMP, UniqueConstraint, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from app.db import Base
@@ -122,7 +122,6 @@ class Transaction(Base):
     payment_mode = Column(String)
     bill_number = Column(String)
     source_ref = Column(String, nullable=False, default="", server_default="")
-    reversal_of_id = Column(UUID(as_uuid=True), ForeignKey("transactions.id"))
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
@@ -216,10 +215,6 @@ class RetailBill(Base):
     paid_amount = Column(Numeric)
     outstanding_amount = Column(Numeric)
     notes = Column(String)
-    status = Column(String, nullable=False, default="POSTED", server_default="POSTED")
-    voided_at = Column(TIMESTAMP)
-    voided_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    void_reason = Column(String)
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
@@ -276,119 +271,8 @@ class PaymentReceipt(Base):
     payment_mode = Column(String)
     amount = Column(Numeric)
     notes = Column(String)
-    status = Column(String, nullable=False, default="POSTED", server_default="POSTED")
-    voided_at = Column(TIMESTAMP)
-    voided_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    void_reason = Column(String)
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
         UniqueConstraint("date", "outlet_id", "receipt_number", name="unique_payment_receipt_number_per_day"),
-    )
-
-
-class AccountingPeriodLock(Base):
-    __tablename__ = "accounting_period_locks"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"), nullable=False)
-    lock_date = Column(Date, nullable=False)
-    is_locked = Column(Boolean, nullable=False, default=True, server_default="true")
-    reason = Column(String)
-    locked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    locked_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
-    unlocked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    unlocked_at = Column(TIMESTAMP)
-
-    __table_args__ = (
-        UniqueConstraint("outlet_id", "lock_date", name="unique_accounting_period_lock"),
-    )
-
-
-class AuditEvent(Base):
-    __tablename__ = "audit_events"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    occurred_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"))
-    event_date = Column(Date)
-    entity_type = Column(String, nullable=False)
-    entity_id = Column(String)
-    action = Column(String, nullable=False)
-    reason = Column(String)
-    before_data = Column(JSON)
-    after_data = Column(JSON)
-    context_data = Column(JSON)
-
-
-class Account(Base):
-    __tablename__ = "accounts"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"), nullable=False)
-    code = Column(String, nullable=False)
-    name = Column(String, nullable=False)
-    account_type = Column(String, nullable=False)
-    subtype = Column(String)
-    is_system = Column(Boolean, nullable=False, default=False, server_default="false")
-    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
-    created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
-
-    __table_args__ = (
-        UniqueConstraint("outlet_id", "code", name="unique_account_code_per_outlet"),
-    )
-
-
-class JournalEntry(Base):
-    __tablename__ = "journal_entries"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"), nullable=False)
-    date = Column(Date, nullable=False)
-    entry_number = Column(String, nullable=False)
-    entry_type = Column(String, nullable=False, default="GENERAL", server_default="GENERAL")
-    reference_type = Column(String)
-    reference_id = Column(String)
-    narration = Column(String)
-    status = Column(String, nullable=False, default="POSTED", server_default="POSTED")
-    reversal_of_id = Column(UUID(as_uuid=True), ForeignKey("journal_entries.id"))
-    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    voided_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    voided_at = Column(TIMESTAMP)
-    void_reason = Column(String)
-    created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
-
-    __table_args__ = (
-        UniqueConstraint("outlet_id", "entry_number", name="unique_journal_number_per_outlet"),
-    )
-
-
-class JournalLine(Base):
-    __tablename__ = "journal_lines"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    entry_id = Column(UUID(as_uuid=True), ForeignKey("journal_entries.id"), nullable=False)
-    account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False)
-    party_id = Column(UUID(as_uuid=True), ForeignKey("parties.id"))
-    description = Column(String)
-    debit = Column(Numeric, nullable=False, default=0, server_default="0")
-    credit = Column(Numeric, nullable=False, default=0, server_default="0")
-    created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
-
-
-class PartyCreditProfile(Base):
-    __tablename__ = "party_credit_profiles"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    outlet_id = Column(UUID(as_uuid=True), ForeignKey("outlets.id"), nullable=False)
-    party_id = Column(UUID(as_uuid=True), ForeignKey("parties.id"), nullable=False)
-    credit_limit = Column(Numeric, nullable=False, default=0, server_default="0")
-    credit_days = Column(Integer, nullable=False, default=0, server_default="0")
-    block_on_limit = Column(Boolean, nullable=False, default=False, server_default="false")
-    updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    updated_at = Column(TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        UniqueConstraint("outlet_id", "party_id", name="unique_party_credit_profile"),
     )
