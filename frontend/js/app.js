@@ -34,7 +34,7 @@ function getStoredOutletId() {
 }
 
 function pageRequiresSingleOutlet(page) {
-  return ["retail", "billing-setup", "upload", "daily-sheet"].includes(page);
+  return ["retail", "billing-setup", "upload", "daily-sheet", "accounts"].includes(page);
 }
 
 function getSingleOutletFallback() {
@@ -140,6 +140,7 @@ function updateAuthUi() {
   const installButton = document.getElementById("installAppButton");
   const dailySheetMenu = document.getElementById("menu-daily-sheet");
   const accessControlMenu = document.getElementById("menu-access-control");
+  const accountsMenu = document.getElementById("menu-accounts");
 
   if (authMeta) {
     authMeta.textContent = currentUser
@@ -162,6 +163,9 @@ function updateAuthUi() {
 
   if (accessControlMenu) {
     accessControlMenu.style.display = isOwner() ? "" : "none";
+  }
+  if (accountsMenu) {
+    accountsMenu.style.display = isOwner() ? "" : "none";
   }
 
   renderOutletSwitcher();
@@ -491,8 +495,8 @@ function loadPage(page) {
       return;
     }
     const selectedOutlet = normalizeSelectedOutletId(page);
-    if (page === "access-control" && !isOwner()) {
-      showToast("Access Control is only for owner");
+    if (["access-control", "accounts"].includes(page) && !isOwner()) {
+      showToast("Owner access required");
       return;
     }
     if (pageRequiresSingleOutlet(page) && selectedOutlet === ALL_OUTLETS_TOKEN) {
@@ -936,6 +940,39 @@ function loadPage(page) {
             <div id="userAccessList" class="upload-box directory-intro access-list">Loading users...</div>
           </div>
 
+          <div class="section">
+            <div class="section-head">
+              <div><h2>Day Control</h2></div>
+            </div>
+            <div class="upload-box compact-form-card">
+              <div class="report-form auth-form auth-inline-form access-inline-form control-lock-form">
+                <input type="date" id="controlLockDate" aria-label="Day control date">
+                <input type="text" id="controlLockReason" placeholder="Reason">
+                <button type="button" onclick="lockSelectedDay()">Lock Day</button>
+                <button type="button" class="button-secondary" onclick="unlockSelectedDay()">Reopen Day</button>
+              </div>
+            </div>
+            <div class="table-card control-table-card">
+              <table>
+                <thead><tr><th>Date</th><th>Status</th><th>Reason</th></tr></thead>
+                <tbody id="periodLockBody"><tr><td colspan="3" class="empty">Loading...</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-head">
+              <div><h2>Audit History</h2></div>
+              <button type="button" class="button-secondary" onclick="loadAuditEvents()">Refresh</button>
+            </div>
+            <div class="table-card control-table-card">
+              <table>
+                <thead><tr><th>Date</th><th>User</th><th>Action</th><th>Record</th><th>Reason</th></tr></thead>
+                <tbody id="auditEventBody"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
         </div>
       `;
 
@@ -944,7 +981,105 @@ function loadPage(page) {
         loadUserAccessList();
         syncUserOutletPicker();
         document.getElementById("newUserRole")?.addEventListener("change", syncUserOutletPicker);
+        if (typeof initProductionControls === "function") initProductionControls();
       }, 100);
+    }
+
+    // --- Accounts Page
+    else if (page === "accounts") {
+      title.innerText = "Accounts";
+      content.innerHTML = `
+        <div class="container finance-page">
+          <div class="card toolbar finance-toolbar">
+            <input type="date" id="financeStartDate" aria-label="Start date">
+            <input type="date" id="financeEndDate" aria-label="End date">
+            <button type="button" onclick="loadFinanceWorkspace()">Load</button>
+          </div>
+
+          <div class="grid finance-kpis">
+            <div class="metric"><span>Income</span><h2 id="financeIncome">Rs 0.00</h2></div>
+            <div class="metric"><span>Expenses</span><h2 id="financeExpenses">Rs 0.00</h2></div>
+            <div class="metric"><span>Net Profit</span><h2 id="financeNetProfit">Rs 0.00</h2></div>
+            <div class="metric"><span>Cash + Bank</span><h2 id="financeFunds">Rs 0.00</h2></div>
+          </div>
+
+          <div class="finance-tabs" role="tablist">
+            <button type="button" class="active" data-finance-tab="expense" onclick="showFinanceTab('expense')">Expense</button>
+            <button type="button" data-finance-tab="journal" onclick="showFinanceTab('journal')">Journal</button>
+            <button type="button" data-finance-tab="book" onclick="showFinanceTab('book')">Cash & Bank</button>
+            <button type="button" data-finance-tab="trial" onclick="showFinanceTab('trial')">Trial Balance</button>
+            <button type="button" data-finance-tab="profit" onclick="showFinanceTab('profit')">Profit & Loss</button>
+            <button type="button" data-finance-tab="credit" onclick="showFinanceTab('credit')">Credit Control</button>
+            <button type="button" data-finance-tab="accounts" onclick="showFinanceTab('accounts')">Chart of Accounts</button>
+          </div>
+
+          <section id="financePanelExpense" class="section finance-panel">
+            <div class="section-head"><h2>Record Expense</h2></div>
+            <div class="upload-box finance-entry-form">
+              <input type="date" id="expenseDate" aria-label="Expense date">
+              <select id="expenseAccount" aria-label="Expense category"></select>
+              <input type="number" id="expenseAmount" min="0" step="0.01" placeholder="Amount">
+              <select id="expensePaymentMode"><option>Cash</option><option>Bank</option><option>Online</option></select>
+              <input type="text" id="expenseNotes" placeholder="Notes">
+              <button type="button" onclick="saveExpenseEntry()">Save Expense</button>
+            </div>
+          </section>
+
+          <section id="financePanelJournal" class="section finance-panel is-hidden">
+            <div class="section-head"><h2>Manual Journal</h2></div>
+            <div class="upload-box finance-journal-form">
+              <input type="date" id="journalDate" aria-label="Journal date">
+              <select id="journalDebitAccount" aria-label="Debit account"></select>
+              <select id="journalCreditAccount" aria-label="Credit account"></select>
+              <input type="number" id="journalAmount" min="0" step="0.01" placeholder="Amount">
+              <input type="text" id="journalNarration" placeholder="Narration">
+              <button type="button" onclick="saveManualJournal()">Post Journal</button>
+            </div>
+            <div class="table-card finance-journal-table"><table><thead><tr><th>Date</th><th>No.</th><th>Type</th><th>Details</th><th>Status</th><th></th></tr></thead><tbody id="financeJournalBody"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table></div>
+          </section>
+
+          <section id="financePanelBook" class="section finance-panel is-hidden">
+            <div class="section-head"><h2>Cash & Bank Book</h2><select id="financeBookAccount" onchange="loadFinanceAccountBook()"><option value="1000">Cash</option><option value="1010">Bank</option></select></div>
+            <div class="grid finance-book-summary"><div class="summary-box"><span>Opening</span><h2 id="financeBookOpening">Rs 0.00</h2></div><div class="summary-box"><span>Closing</span><h2 id="financeBookClosing">Rs 0.00</h2></div></div>
+            <div class="table-card"><table><thead><tr><th>Date</th><th>No.</th><th>Type</th><th>Details</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody id="financeBookBody"></tbody></table></div>
+          </section>
+
+          <section id="financePanelTrial" class="section finance-panel is-hidden">
+            <div class="section-head"><h2>Trial Balance</h2><button type="button" class="button-secondary" onclick="downloadFinanceTable('trial')">Download Excel</button></div>
+            <div class="table-card"><table><thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody id="trialBalanceBody"></tbody><tfoot><tr><th colspan="3">Total</th><th id="trialDebitTotal">0.00</th><th id="trialCreditTotal">0.00</th><th></th></tr></tfoot></table></div>
+          </section>
+
+          <section id="financePanelProfit" class="section finance-panel is-hidden">
+            <div class="section-head"><h2>Profit & Loss</h2><button type="button" class="button-secondary" onclick="downloadFinanceTable('profit')">Download Excel</button></div>
+            <div class="table-card"><table><thead><tr><th>Account</th><th>Section</th><th>Amount</th></tr></thead><tbody id="profitLossBody"></tbody></table></div>
+          </section>
+
+          <section id="financePanelCredit" class="section finance-panel is-hidden">
+            <div class="section-head"><h2>Credit Control</h2><input type="search" id="creditPartySearch" placeholder="Search party" oninput="filterCreditProfiles()"></div>
+            <div class="table-card finance-credit-table"><table><thead><tr><th>Party</th><th>Balance</th><th>Limit</th><th>Days</th><th>Block</th><th></th></tr></thead><tbody id="creditProfileBody"></tbody></table></div>
+          </section>
+
+          <section id="financePanelAccounts" class="section finance-panel is-hidden">
+            <div class="section-head"><h2>Chart of Accounts</h2><div class="finance-head-actions"><button type="button" class="button-secondary" onclick="downloadTallyXml()">Export Tally XML</button><button type="button" class="button-secondary" onclick="syncExistingBooks()">Sync Existing Records</button></div></div>
+            <div class="upload-box finance-account-form">
+              <input type="text" id="accountCode" placeholder="Code">
+              <input type="text" id="accountName" placeholder="Account name">
+              <select id="accountType"><option>ASSET</option><option>LIABILITY</option><option>EQUITY</option><option>INCOME</option><option>EXPENSE</option></select>
+              <button type="button" onclick="saveFinanceAccount()">Add Account</button>
+            </div>
+            <div class="table-card"><table><thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Class</th></tr></thead><tbody id="financeAccountBody"></tbody></table></div>
+          </section>
+        </div>
+      `;
+      setTimeout(() => {
+        const today = new Date();
+        const start = new Date(today.getFullYear(), today.getMonth(), 1);
+        document.getElementById("financeStartDate").value = formatDateInput(start);
+        document.getElementById("financeEndDate").value = formatDateInput(today);
+        document.getElementById("expenseDate").value = formatDateInput(today);
+        document.getElementById("journalDate").value = formatDateInput(today);
+        if (typeof initFinanceWorkspace === "function") initFinanceWorkspace();
+      }, 50);
     }
 
     // --- Ledger Page
@@ -1111,6 +1246,7 @@ function loadPage(page) {
                   <button type="button" onclick="saveRetailBill({ autoStartNext: true })">Save Bill</button>
                   <button type="button" onclick="sendCurrentRetailBill()">Send on WhatsApp</button>
                   <button type="button" onclick="printCurrentRetailBill()">Print Bill</button>
+                  <button type="button" id="retailVoidButton" class="button-danger" onclick="voidCurrentRetailBill()" style="display:none;">Cancel Bill</button>
                 </div>
               </div>
 
@@ -1152,6 +1288,7 @@ function loadPage(page) {
                   <button type="button" onclick="sendCurrentPaymentReceipt()">Send on WhatsApp</button>
                   <button type="button" onclick="printCurrentPaymentReceipt()">Print Payment Receipt</button>
                   <button type="button" onclick="resetPaymentReceiptForm()">New Payment Receipt</button>
+                  <button type="button" id="paymentReceiptVoidButton" class="button-danger" onclick="voidCurrentPaymentReceipt()" style="display:none;">Cancel Receipt</button>
                 </div>
               </div>
 

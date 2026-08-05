@@ -13,7 +13,7 @@
   <!-- Favicon -->
   <link rel="icon" href="assets/srs-logics-logo-small.png?v=20260515-1">
   <link rel="apple-touch-icon" href="assets/srs-logics-logo.png?v=20260515-1">
-  <link rel="manifest" href="manifest.webmanifest?v=20260803-1">
+  <link rel="manifest" href="manifest.webmanifest?v=20260805-1">
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -21,7 +21,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="css/style.css?v=20260803-1">
+  <link rel="stylesheet" href="css/style.css?v=20260805-5">
 
   <!-- Charts & icons -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -59,6 +59,7 @@
       <div class="menu-group">
         <span class="menu-label">Finance</span>
         <button type="button" id="menu-ledger" onclick="loadPage('ledger')"><i data-lucide="book-open-check"></i><span>Ledger</span></button>
+        <button type="button" id="menu-accounts" onclick="loadPage('accounts')"><i data-lucide="landmark"></i><span>Accounts</span></button>
         <button type="button" id="menu-analytics" onclick="loadPage('analytics')"><i data-lucide="chart-no-axes-combined"></i><span>Analytics</span></button>
         <button type="button" id="menu-reports" onclick="loadPage('reports')"><i data-lucide="file-down"></i><span>Reports</span></button>
       </div>
@@ -113,19 +114,21 @@
 </div>
 
 <!-- Scripts (order matters) -->
-<script src="js/api.js?v=20260803-1"></script>
-<script src="js/app.js?v=20260803-1"></script>
-<script src="js/upload.js?v=20260803-1"></script>
-<script src="js/dashboard.js?v=20260803-1"></script>
-<script src="js/ledger.js?v=20260803-1"></script>
-<script src="js/analytics.js?v=20260803-1"></script>
-<script src="js/retail.js?v=20260803-1"></script>
-<script src="js/daily-sheet.js?v=20260803-1"></script>
-<script src="js/reports.js?v=20260803-1"></script>
+<script src="js/api.js?v=20260805-1"></script>
+<script src="js/app.js?v=20260805-5"></script>
+<script src="js/upload.js?v=20260805-1"></script>
+<script src="js/dashboard.js?v=20260805-1"></script>
+<script src="js/ledger.js?v=20260805-1"></script>
+<script src="js/analytics.js?v=20260805-1"></script>
+<script src="js/retail.js?v=20260805-1"></script>
+<script src="js/daily-sheet.js?v=20260805-1"></script>
+<script src="js/reports.js?v=20260805-1"></script>
+<script src="js/control.js?v=20260805-1"></script>
+<script src="js/finance.js?v=20260805-5"></script>
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=20260803-1").catch(err => {
+      navigator.serviceWorker.register("./sw.js?v=20260805-5").catch(err => {
         console.warn("Service worker registration failed", err);
       });
     });

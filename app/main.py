@@ -1,7 +1,8 @@
 from uuid import UUID, uuid4
 from io import BytesIO
 from urllib.parse import quote
-from datetime import datetime, timedelta
+from xml.sax.saxutils import escape as xml_escape
+from datetime import date as date_type, datetime, timedelta
 import hashlib
 import hmac
 import os
@@ -17,6 +18,23 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 from app.db import SessionLocal
 from app import models
+from app.domain.finance import (
+    account_balance_value,
+    ledger_delta_value,
+    payable_delta_value,
+    receivable_delta_value,
+    reversal_numeric_values,
+)
+from app.services.accounting import (
+    create_journal_entry,
+    ensure_system_accounts,
+    post_payment_receipt,
+    post_operational_transaction,
+    post_retail_bill,
+    reverse_journal_entry,
+    reverse_reference_journal,
+    trial_balance_rows,
+)
 from sqlalchemy import case, func, text, or_, and_, exists, cast, String
 from sqlalchemy.exc import OperationalError
 from decimal import Decimal
@@ -585,6 +603,77 @@ def require_owner(user: models.User = Depends(get_current_user)):
     return user
 
 
+def audit_json(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (UUID,)):
+        return str(value)
+    if isinstance(value, (datetime, date_type)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): audit_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [audit_json(item) for item in value]
+    if hasattr(value, "__table__"):
+        return {
+            column.name: audit_json(getattr(value, column.name))
+            for column in value.__table__.columns
+        }
+    return str(value)
+
+
+def record_audit_event(
+    db: Session,
+    *,
+    user: models.User | None,
+    outlet_id,
+    event_date,
+    entity_type: str,
+    entity_id=None,
+    action: str,
+    reason: str | None = None,
+    before_data=None,
+    after_data=None,
+    context_data=None,
+):
+    event = models.AuditEvent(
+        id=uuid4(),
+        user_id=user.id if user else None,
+        outlet_id=outlet_id,
+        event_date=event_date,
+        entity_type=str(entity_type or "UNKNOWN").upper(),
+        entity_id=str(entity_id) if entity_id is not None else None,
+        action=str(action or "UNKNOWN").upper(),
+        reason=str(reason or "").strip() or None,
+        before_data=audit_json(before_data),
+        after_data=audit_json(after_data),
+        context_data=audit_json(context_data),
+    )
+    db.add(event)
+    return event
+
+
+def get_accounting_period_lock(db: Session, outlet_id, target_date):
+    if not outlet_id or not target_date:
+        return None
+    return db.query(models.AccountingPeriodLock).filter(
+        models.AccountingPeriodLock.outlet_id == outlet_id,
+        models.AccountingPeriodLock.lock_date == target_date,
+        models.AccountingPeriodLock.is_locked.is_(True),
+    ).first()
+
+
+def ensure_business_date_open(db: Session, outlet_id, target_date):
+    lock = get_accounting_period_lock(db, outlet_id, target_date)
+    if lock:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{target_date.strftime('%d/%m/%Y')} is locked. Ask the owner to unlock the day before changing it.",
+        )
+
+
 def get_outlet_scope(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
@@ -643,7 +732,6 @@ def outlet_scope_filter(model, scope):
     return model.outlet_id == resolve_scope_outlet_id(scope)
 
 
-ensure_database_schema()
 ensure_outlet_access_defaults()
 
 app.add_middleware(
@@ -831,6 +919,820 @@ def list_outlets(db: Session = Depends(get_db), user: models.User = Depends(get_
         "results": [serialize_outlet(outlet) for outlet in outlets],
         "can_view_all": (user.role or ROLE_STAFF).upper() == ROLE_OWNER
     }
+
+
+@app.get("/control/period-locks")
+def list_period_locks(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: Session = Depends(get_db),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    query = db.query(models.AccountingPeriodLock).filter(
+        models.AccountingPeriodLock.outlet_id == current_outlet.id
+    )
+    start = parse_input_date(start_date) if start_date else None
+    end = parse_input_date(end_date) if end_date else None
+    if start:
+        query = query.filter(models.AccountingPeriodLock.lock_date >= start)
+    if end:
+        query = query.filter(models.AccountingPeriodLock.lock_date <= end)
+    rows = query.order_by(models.AccountingPeriodLock.lock_date.desc()).limit(180).all()
+    return {
+        "results": [
+            {
+                "id": str(row.id),
+                "date": str(row.lock_date),
+                "is_locked": bool(row.is_locked),
+                "reason": row.reason or "",
+                "locked_at": row.locked_at.isoformat() if row.locked_at else None,
+                "unlocked_at": row.unlocked_at.isoformat() if row.unlocked_at else None,
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.post("/control/period-locks/{lock_date}/lock")
+def lock_accounting_period(
+    lock_date: str,
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    target_date = parse_input_date(lock_date)
+    if not target_date:
+        raise HTTPException(status_code=400, detail="Invalid lock date")
+
+    reason = str(payload.get("reason") or "Day verified and closed").strip()
+    row = db.query(models.AccountingPeriodLock).filter(
+        models.AccountingPeriodLock.outlet_id == current_outlet.id,
+        models.AccountingPeriodLock.lock_date == target_date,
+    ).first()
+    before = audit_json(row) if row else None
+    if row:
+        row.is_locked = True
+        row.reason = reason
+        row.locked_by_user_id = user.id
+        row.locked_at = datetime.utcnow()
+        row.unlocked_by_user_id = None
+        row.unlocked_at = None
+    else:
+        row = models.AccountingPeriodLock(
+            id=uuid4(),
+            outlet_id=current_outlet.id,
+            lock_date=target_date,
+            is_locked=True,
+            reason=reason,
+            locked_by_user_id=user.id,
+        )
+        db.add(row)
+
+    record_audit_event(
+        db,
+        user=user,
+        outlet_id=current_outlet.id,
+        event_date=target_date,
+        entity_type="ACCOUNTING_DAY",
+        entity_id=target_date,
+        action="LOCK",
+        reason=reason,
+        before_data=before,
+        after_data={"date": target_date, "is_locked": True},
+    )
+    db.commit()
+    return {"status": "success", "date": str(target_date), "is_locked": True}
+
+
+@app.post("/control/period-locks/{lock_date}/unlock")
+def unlock_accounting_period(
+    lock_date: str,
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    target_date = parse_input_date(lock_date)
+    if not target_date:
+        raise HTTPException(status_code=400, detail="Invalid lock date")
+    reason = str(payload.get("reason") or "Owner reopened the day").strip()
+    row = db.query(models.AccountingPeriodLock).filter(
+        models.AccountingPeriodLock.outlet_id == current_outlet.id,
+        models.AccountingPeriodLock.lock_date == target_date,
+    ).first()
+    if not row or not row.is_locked:
+        return {"status": "success", "date": str(target_date), "is_locked": False}
+
+    before = audit_json(row)
+    row.is_locked = False
+    row.unlocked_by_user_id = user.id
+    row.unlocked_at = datetime.utcnow()
+    record_audit_event(
+        db,
+        user=user,
+        outlet_id=current_outlet.id,
+        event_date=target_date,
+        entity_type="ACCOUNTING_DAY",
+        entity_id=target_date,
+        action="UNLOCK",
+        reason=reason,
+        before_data=before,
+        after_data={"date": target_date, "is_locked": False},
+    )
+    db.commit()
+    return {"status": "success", "date": str(target_date), "is_locked": False}
+
+
+@app.get("/control/audit-events")
+def list_audit_events(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    entity_type: str | None = None,
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    query = db.query(models.AuditEvent).filter(models.AuditEvent.outlet_id == current_outlet.id)
+    start = parse_input_date(start_date) if start_date else None
+    end = parse_input_date(end_date) if end_date else None
+    if start:
+        query = query.filter(models.AuditEvent.event_date >= start)
+    if end:
+        query = query.filter(models.AuditEvent.event_date <= end)
+    if entity_type:
+        query = query.filter(models.AuditEvent.entity_type == entity_type.strip().upper())
+    rows = query.order_by(models.AuditEvent.occurred_at.desc()).limit(max(1, min(limit, 500))).all()
+    user_ids = {row.user_id for row in rows if row.user_id}
+    users = {
+        account.id: account.display_name or account.username
+        for account in db.query(models.User).filter(models.User.id.in_(user_ids)).all()
+    } if user_ids else {}
+    return {
+        "results": [
+            {
+                "id": str(row.id),
+                "occurred_at": row.occurred_at.isoformat() if row.occurred_at else None,
+                "date": str(row.event_date) if row.event_date else None,
+                "user": users.get(row.user_id, "System"),
+                "entity_type": row.entity_type,
+                "entity_id": row.entity_id,
+                "action": row.action,
+                "reason": row.reason or "",
+                "before": row.before_data,
+                "after": row.after_data,
+                "context": row.context_data,
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.get("/finance/accounts")
+def list_accounts(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    ensure_system_accounts(db, current_outlet.id)
+    db.commit()
+    rows = db.query(models.Account).filter(
+        models.Account.outlet_id == current_outlet.id,
+        models.Account.is_active.is_(True),
+    ).order_by(models.Account.code.asc()).all()
+    return {
+        "results": [
+            {
+                "id": str(row.id),
+                "code": row.code,
+                "name": row.name,
+                "account_type": row.account_type,
+                "subtype": row.subtype or "",
+                "is_system": bool(row.is_system),
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.post("/finance/accounts")
+def create_account(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    code = str(payload.get("code") or "").strip().upper()
+    name = str(payload.get("name") or "").strip()
+    account_type = str(payload.get("account_type") or "").strip().upper()
+    if not code or not name or account_type not in {"ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"}:
+        return {"error": "Enter account code, name, and a valid account type"}
+    existing = db.query(models.Account).filter(
+        models.Account.outlet_id == current_outlet.id,
+        models.Account.code == code,
+    ).first()
+    if existing:
+        return {"error": "Account code already exists"}
+    account = models.Account(
+        id=uuid4(),
+        outlet_id=current_outlet.id,
+        code=code,
+        name=name,
+        account_type=account_type,
+        subtype=str(payload.get("subtype") or "").strip().upper() or None,
+        is_system=False,
+        is_active=True,
+    )
+    db.add(account)
+    record_audit_event(
+        db, user=user, outlet_id=current_outlet.id, event_date=None,
+        entity_type="ACCOUNT", entity_id=account.id, action="CREATE", after_data=account,
+    )
+    db.commit()
+    return {"status": "success", "account": audit_json(account)}
+
+
+@app.post("/finance/journals")
+def create_manual_journal(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    target_date = parse_input_date(payload.get("date"))
+    if not target_date:
+        return {"error": "Select journal date"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
+    try:
+        entry = create_journal_entry(
+            db,
+            outlet_id=current_outlet.id,
+            target_date=target_date,
+            entry_type=payload.get("entry_type") or "GENERAL",
+            lines=payload.get("lines") or [],
+            user_id=user.id,
+            narration=payload.get("narration"),
+        )
+        record_audit_event(
+            db, user=user, outlet_id=current_outlet.id, event_date=target_date,
+            entity_type="JOURNAL", entity_id=entry.id, action="CREATE", after_data=payload,
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return {"error": str(exc)}
+    return {"status": "success", "entry_number": entry.entry_number, "id": str(entry.id)}
+
+
+@app.post("/finance/expenses")
+def create_expense(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    target_date = parse_input_date(payload.get("date"))
+    amount = parse_decimal(payload.get("amount"))
+    category = str(payload.get("category") or "General Expense").strip()
+    expense_account_code = str(payload.get("account_code") or "6000").strip()
+    payment_mode = str(payload.get("payment_mode") or "Cash").strip()
+    notes = str(payload.get("notes") or "").strip()
+    if not target_date or amount <= 0:
+        return {"error": "Select date and enter a valid expense amount"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
+    ensure_system_accounts(db, current_outlet.id)
+    expense_account = db.query(models.Account).filter(
+        models.Account.outlet_id == current_outlet.id,
+        models.Account.code == expense_account_code,
+        models.Account.account_type == "EXPENSE",
+        models.Account.is_active.is_(True),
+    ).first()
+    if not expense_account:
+        return {"error": "Select a valid expense category"}
+    payment_code = "1000" if payment_mode.upper() == "CASH" else "1010"
+    try:
+        entry = create_journal_entry(
+            db,
+            outlet_id=current_outlet.id,
+            target_date=target_date,
+            entry_type="EXPENSE",
+            user_id=user.id,
+            narration=notes or category,
+            lines=[
+                {"account_code": expense_account.code, "description": category, "debit": amount, "credit": 0},
+                {"account_code": payment_code, "description": payment_mode, "debit": 0, "credit": amount},
+            ],
+        )
+        record_audit_event(
+            db, user=user, outlet_id=current_outlet.id, event_date=target_date,
+            entity_type="EXPENSE", entity_id=entry.id, action="CREATE",
+            after_data={"category": category, "account_code": expense_account.code, "amount": amount, "payment_mode": payment_mode, "notes": notes},
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return {"error": str(exc)}
+    return {"status": "success", "entry_number": entry.entry_number}
+
+
+@app.get("/finance/journals")
+def list_journals(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    entry_type: str | None = None,
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    query = db.query(models.JournalEntry).filter(
+        models.JournalEntry.outlet_id == current_outlet.id,
+    )
+    start = parse_input_date(start_date) if start_date else None
+    end = parse_input_date(end_date) if end_date else None
+    if start:
+        query = query.filter(models.JournalEntry.date >= start)
+    if end:
+        query = query.filter(models.JournalEntry.date <= end)
+    if entry_type:
+        query = query.filter(models.JournalEntry.entry_type == entry_type.strip().upper())
+    entries = query.order_by(
+        models.JournalEntry.date.desc(),
+        models.JournalEntry.created_at.desc(),
+    ).limit(max(1, min(limit, 500))).all()
+    entry_ids = [entry.id for entry in entries]
+    line_rows = db.query(models.JournalLine, models.Account).join(
+        models.Account, models.Account.id == models.JournalLine.account_id,
+    ).filter(models.JournalLine.entry_id.in_(entry_ids)).order_by(
+        models.JournalLine.created_at.asc(),
+    ).all() if entry_ids else []
+    lines_by_entry = {}
+    for line, account in line_rows:
+        lines_by_entry.setdefault(line.entry_id, []).append({
+            "account_code": account.code,
+            "account_name": account.name,
+            "description": line.description or "",
+            "debit": float(line.debit or 0),
+            "credit": float(line.credit or 0),
+        })
+    return {
+        "results": [
+            {
+                "id": str(entry.id),
+                "date": str(entry.date),
+                "entry_number": entry.entry_number,
+                "entry_type": entry.entry_type,
+                "narration": entry.narration or "",
+                "status": entry.status or "POSTED",
+                "reference_type": entry.reference_type or "",
+                "void_reason": entry.void_reason or "",
+                "lines": lines_by_entry.get(entry.id, []),
+            }
+            for entry in entries
+        ]
+    }
+
+
+@app.post("/finance/journals/{journal_id}/void")
+def void_journal(
+    journal_id: UUID,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        return {"error": "Enter a reason for cancelling this entry"}
+    entry = db.query(models.JournalEntry).filter(
+        models.JournalEntry.id == journal_id,
+        models.JournalEntry.outlet_id == current_outlet.id,
+    ).first()
+    if not entry:
+        return {"error": "Journal entry not found"}
+    if (entry.status or "POSTED").upper() != "POSTED":
+        return {"error": "This entry is already cancelled"}
+    if entry.reference_type in {"RETAIL_BILL", "PAYMENT_RECEIPT"}:
+        return {"error": "Cancel this entry from Retail Billing so its source document is also reversed"}
+    ensure_business_date_open(db, current_outlet.id, entry.date)
+    before = audit_json(entry)
+    try:
+        reversal = reverse_journal_entry(db, entry, user_id=user.id, reason=reason)
+        record_audit_event(
+            db, user=user, outlet_id=current_outlet.id, event_date=entry.date,
+            entity_type="JOURNAL", entity_id=entry.id, action="VOID", reason=reason,
+            before_data=before, after_data={"status": "VOID", "reversal_id": reversal.id},
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        return {"error": str(exc)}
+    return {"status": "success", "reversal_id": str(reversal.id)}
+
+
+@app.post("/finance/sync-books")
+def sync_existing_books(
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    start = parse_input_date(payload.get("start_date")) if payload.get("start_date") else None
+    end = parse_input_date(payload.get("end_date")) if payload.get("end_date") else None
+    if start and end and start > end:
+        return {"error": "Select a valid date range"}
+    batch_size = max(25, min(int(payload.get("batch_size") or 250), 500))
+    existing_rows = db.query(
+        models.JournalEntry.reference_type,
+        models.JournalEntry.reference_id,
+    ).filter(
+        models.JournalEntry.outlet_id == current_outlet.id,
+        models.JournalEntry.reference_type.in_(["TRANSACTION", "RETAIL_BILL", "PAYMENT_RECEIPT"]),
+    ).all()
+    existing = {
+        (str(row.reference_type or "").upper(), str(row.reference_id or ""))
+        for row in existing_rows
+    }
+
+    transaction_query = db.query(models.Transaction).filter(
+        models.Transaction.outlet_id == current_outlet.id,
+        models.Transaction.type.in_(["SALE", "PURCHASE", "PAYMENT", "OPENING"]),
+        models.Transaction.amount != 0,
+        ~func.coalesce(models.Transaction.source_ref, "").like("retail-bill:%"),
+        ~func.coalesce(models.Transaction.source_ref, "").like("retail-payment:%"),
+        ~func.coalesce(models.Transaction.source_ref, "").like("payment-receipt:%"),
+    )
+    bill_query = db.query(models.RetailBill).filter(
+        models.RetailBill.outlet_id == current_outlet.id,
+        models.RetailBill.status == "POSTED",
+    )
+    receipt_query = db.query(models.PaymentReceipt).filter(
+        models.PaymentReceipt.outlet_id == current_outlet.id,
+        models.PaymentReceipt.status == "POSTED",
+    )
+    if start:
+        transaction_query = transaction_query.filter(models.Transaction.date >= start)
+        bill_query = bill_query.filter(models.RetailBill.date >= start)
+        receipt_query = receipt_query.filter(models.PaymentReceipt.date >= start)
+    if end:
+        transaction_query = transaction_query.filter(models.Transaction.date <= end)
+        bill_query = bill_query.filter(models.RetailBill.date <= end)
+        receipt_query = receipt_query.filter(models.PaymentReceipt.date <= end)
+
+    candidates = []
+    for transaction in transaction_query.order_by(models.Transaction.date.asc()).all():
+        if ("TRANSACTION", str(transaction.id)) not in existing:
+            candidates.append(("TRANSACTION", transaction))
+    for bill in bill_query.order_by(models.RetailBill.date.asc()).all():
+        if ("RETAIL_BILL", str(bill.id)) not in existing:
+            candidates.append(("RETAIL_BILL", bill))
+    for receipt in receipt_query.order_by(models.PaymentReceipt.date.asc()).all():
+        if ("PAYMENT_RECEIPT", str(receipt.id)) not in existing:
+            candidates.append(("PAYMENT_RECEIPT", receipt))
+
+    posted = 0
+    ignored = 0
+    try:
+        for reference_type, record in candidates[:batch_size]:
+            if reference_type == "TRANSACTION":
+                entry = post_operational_transaction(db, record, user_id=user.id)
+                if entry is None:
+                    ignored += 1
+                    continue
+            elif reference_type == "RETAIL_BILL":
+                post_retail_bill(db, record, user_id=user.id)
+            else:
+                post_payment_receipt(db, record, user_id=user.id)
+            posted += 1
+        record_audit_event(
+            db, user=user, outlet_id=current_outlet.id, event_date=None,
+            entity_type="ACCOUNTING_BOOKS", action="SYNC",
+            after_data={"posted": posted, "ignored": ignored, "start_date": start, "end_date": end},
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        return {"error": "Accounting sync failed", "details": str(exc)}
+
+    remaining = max(0, len(candidates) - batch_size)
+    return {"status": "success", "posted": posted, "ignored": ignored, "remaining": remaining}
+
+
+@app.get("/finance/trial-balance")
+def get_trial_balance(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    ensure_system_accounts(db, current_outlet.id)
+    db.commit()
+    start = parse_input_date(start_date) if start_date else None
+    end = parse_input_date(end_date) if end_date else None
+    rows = trial_balance_rows(db, current_outlet.id, start, end)
+    return {
+        "results": rows,
+        "total_debit": sum(row["debit"] for row in rows),
+        "total_credit": sum(row["credit"] for row in rows),
+    }
+
+
+@app.get("/finance/account-book/{account_code}")
+def get_account_book(
+    account_code: str,
+    start_date: str,
+    end_date: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    start = parse_input_date(start_date)
+    end = parse_input_date(end_date)
+    if not start or not end or start > end:
+        return {"error": "Select a valid date range"}
+    account = db.query(models.Account).filter(
+        models.Account.outlet_id == current_outlet.id,
+        models.Account.code == account_code.strip(),
+        models.Account.is_active.is_(True),
+    ).first()
+    if not account:
+        return {"error": "Account not found"}
+    prior = db.query(
+        func.coalesce(func.sum(models.JournalLine.debit), 0),
+        func.coalesce(func.sum(models.JournalLine.credit), 0),
+    ).join(models.JournalEntry, models.JournalEntry.id == models.JournalLine.entry_id).filter(
+        models.JournalLine.account_id == account.id,
+        models.JournalEntry.date < start,
+    ).first()
+    opening = Decimal(str(account_balance_value(account.account_type, prior[0], prior[1])))
+    line_rows = db.query(models.JournalLine, models.JournalEntry).join(
+        models.JournalEntry, models.JournalEntry.id == models.JournalLine.entry_id,
+    ).filter(
+        models.JournalLine.account_id == account.id,
+        models.JournalEntry.date >= start,
+        models.JournalEntry.date <= end,
+    ).order_by(models.JournalEntry.date.asc(), models.JournalEntry.created_at.asc(), models.JournalLine.created_at.asc()).all()
+    running = opening
+    results = []
+    for line, entry in line_rows:
+        change = Decimal(str(account_balance_value(account.account_type, line.debit, line.credit)))
+        running += change
+        results.append({
+            "date": str(entry.date),
+            "entry_number": entry.entry_number,
+            "entry_type": entry.entry_type,
+            "narration": line.description or entry.narration or "",
+            "debit": float(line.debit or 0),
+            "credit": float(line.credit or 0),
+            "balance": float(running),
+        })
+    return {
+        "account": {"code": account.code, "name": account.name, "account_type": account.account_type},
+        "opening_balance": float(opening),
+        "closing_balance": float(running),
+        "results": results,
+    }
+
+
+@app.get("/finance/profit-loss")
+def get_profit_loss(
+    start_date: str,
+    end_date: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    start = parse_input_date(start_date)
+    end = parse_input_date(end_date)
+    if not start or not end or start > end:
+        return {"error": "Select a valid date range"}
+    rows = trial_balance_rows(db, current_outlet.id, start, end)
+    income = sum(row["balance"] for row in rows if row["account_type"] == "INCOME")
+    expenses = sum(row["balance"] for row in rows if row["account_type"] == "EXPENSE")
+    return {"income": income, "expenses": expenses, "net_profit": income - expenses, "accounts": rows}
+
+
+@app.get("/finance/export")
+def export_finance_report(
+    report_type: str,
+    start_date: str,
+    end_date: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    start = parse_input_date(start_date)
+    end = parse_input_date(end_date)
+    report_key = str(report_type or "").strip().lower()
+    if not start or not end or start > end:
+        raise HTTPException(status_code=400, detail="Select a valid date range")
+    if report_key not in {"trial", "profit"}:
+        raise HTTPException(status_code=400, detail="Unknown finance report")
+
+    rows = trial_balance_rows(db, current_outlet.id, start, end)
+    workbook = Workbook()
+    sheet = workbook.active
+    title = "Trial Balance" if report_key == "trial" else "Profit and Loss"
+    sheet.title = title[:31]
+    sheet.append([current_outlet.name, title, f"{start.strftime('%d/%m/%Y')} to {end.strftime('%d/%m/%Y')}"])
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=6)
+    sheet["A1"].font = Font(bold=True, size=14)
+    sheet["A1"].alignment = Alignment(horizontal="center")
+
+    if report_key == "trial":
+        sheet.append(["Code", "Account", "Type", "Debit", "Credit", "Balance"])
+        for row in rows:
+            sheet.append([row["code"], row["name"], row["account_type"], row["debit"], row["credit"], row["balance"]])
+        sheet.append(["", "Total", "", sum(row["debit"] for row in rows), sum(row["credit"] for row in rows), ""])
+        filename_prefix = "trial-balance"
+    else:
+        report_rows = [row for row in rows if row["account_type"] in {"INCOME", "EXPENSE"}]
+        income = sum(row["balance"] for row in report_rows if row["account_type"] == "INCOME")
+        expenses = sum(row["balance"] for row in report_rows if row["account_type"] == "EXPENSE")
+        sheet.append(["Code", "Account", "Section", "Amount"])
+        for row in report_rows:
+            sheet.append([row["code"], row["name"], "Income" if row["account_type"] == "INCOME" else "Expense", row["balance"]])
+        sheet.append(["", "Net Profit", "", income - expenses])
+        filename_prefix = "profit-and-loss"
+
+    header_row = 2
+    for cell in sheet[header_row]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="6F4E37")
+        cell.alignment = Alignment(horizontal="center")
+    for row in sheet.iter_rows(min_row=3):
+        for cell in row:
+            if isinstance(cell.value, (int, float)):
+                cell.number_format = '#,##0.00'
+    widths = [14, 30, 18, 18, 18, 18]
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+    sheet.freeze_panes = "A3"
+
+    output = BytesIO()
+    workbook.save(output)
+    filename = f"{filename_prefix}-{start.isoformat()}-{end.isoformat()}.xlsx"
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/finance/credit-profiles")
+def list_credit_profiles(
+    name: str | None = None,
+    limit: int = 250,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    party_query = db.query(models.Party)
+    if name:
+        party_query = party_query.filter(models.Party.normalized_name.contains(normalize_party_name(name)))
+    parties = party_query.order_by(models.Party.name.asc()).limit(max(1, min(limit, 500))).all()
+    party_ids = [party.id for party in parties]
+    profiles = {
+        row.party_id: row
+        for row in db.query(models.PartyCreditProfile).filter(
+            models.PartyCreditProfile.outlet_id == current_outlet.id,
+            models.PartyCreditProfile.party_id.in_(party_ids),
+        ).all()
+    } if party_ids else {}
+    transactions = db.query(models.Transaction).filter(
+        models.Transaction.outlet_id == current_outlet.id,
+        models.Transaction.party_id.in_(party_ids),
+    ).all() if party_ids else []
+    balances = {party_id: Decimal("0") for party_id in party_ids}
+    for transaction in transactions:
+        balances[transaction.party_id] = balances.get(transaction.party_id, Decimal("0")) + receivable_delta_value(
+            transaction.type, transaction.category, transaction.amount,
+        )
+    return {
+        "results": [
+            {
+                "party_id": str(party.id),
+                "party_name": party.name,
+                "phone": party.phone or "",
+                "balance": float(balances.get(party.id, 0)),
+                "credit_limit": float(profiles.get(party.id).credit_limit or 0) if profiles.get(party.id) else 0,
+                "credit_days": int(profiles.get(party.id).credit_days or 0) if profiles.get(party.id) else 0,
+                "block_on_limit": bool(profiles.get(party.id).block_on_limit) if profiles.get(party.id) else False,
+            }
+            for party in parties
+        ]
+    }
+
+
+@app.put("/finance/credit-profiles/{party_id}")
+def update_credit_profile(
+    party_id: UUID,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    party = db.query(models.Party).filter(models.Party.id == party_id).first()
+    if not party:
+        return {"error": "Party not found"}
+    credit_limit = parse_decimal(payload.get("credit_limit"))
+    credit_days = int(payload.get("credit_days") or 0)
+    if credit_limit < 0 or credit_days < 0:
+        return {"error": "Credit limit and credit days cannot be negative"}
+    profile = db.query(models.PartyCreditProfile).filter(
+        models.PartyCreditProfile.outlet_id == current_outlet.id,
+        models.PartyCreditProfile.party_id == party_id,
+    ).first()
+    before = audit_json(profile)
+    if not profile:
+        profile = models.PartyCreditProfile(
+            id=uuid4(), outlet_id=current_outlet.id, party_id=party_id,
+        )
+        db.add(profile)
+    profile.credit_limit = credit_limit
+    profile.credit_days = credit_days
+    profile.block_on_limit = bool(payload.get("block_on_limit"))
+    profile.updated_by_user_id = user.id
+    record_audit_event(
+        db, user=user, outlet_id=current_outlet.id, event_date=None,
+        entity_type="CREDIT_PROFILE", entity_id=party_id,
+        action="UPDATE" if before else "CREATE", before_data=before, after_data=profile,
+    )
+    db.commit()
+    return {"status": "success"}
+
+
+@app.get("/integrations/tally/export")
+def export_tally_vouchers(
+    start_date: str,
+    end_date: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    start = parse_input_date(start_date)
+    end = parse_input_date(end_date)
+    if not start or not end or start > end:
+        raise HTTPException(status_code=400, detail="Select a valid date range")
+    entries = db.query(models.JournalEntry).filter(
+        models.JournalEntry.outlet_id == current_outlet.id,
+        models.JournalEntry.date >= start,
+        models.JournalEntry.date <= end,
+    ).order_by(models.JournalEntry.date.asc(), models.JournalEntry.created_at.asc()).all()
+    entry_ids = [entry.id for entry in entries]
+    line_rows = db.query(models.JournalLine, models.Account).join(
+        models.Account, models.Account.id == models.JournalLine.account_id,
+    ).filter(models.JournalLine.entry_id.in_(entry_ids)).order_by(
+        models.JournalLine.created_at.asc(),
+    ).all() if entry_ids else []
+    lines_by_entry = {}
+    for line, account in line_rows:
+        lines_by_entry.setdefault(line.entry_id, []).append((line, account))
+
+    voucher_xml = []
+    for entry in entries:
+        ledger_xml = []
+        for line, account in lines_by_entry.get(entry.id, []):
+            debit = Decimal(line.debit or 0)
+            credit = Decimal(line.credit or 0)
+            amount = credit if credit > 0 else -debit
+            deemed_positive = "No" if credit > 0 else "Yes"
+            ledger_xml.append(
+                "<ALLLEDGERENTRIES.LIST>"
+                f"<LEDGERNAME>{xml_escape(account.name)}</LEDGERNAME>"
+                f"<ISDEEMEDPOSITIVE>{deemed_positive}</ISDEEMEDPOSITIVE>"
+                f"<AMOUNT>{amount:.2f}</AMOUNT>"
+                "</ALLLEDGERENTRIES.LIST>"
+            )
+        voucher_xml.append(
+            '<TALLYMESSAGE xmlns:UDF="TallyUDF">'
+            '<VOUCHER VCHTYPE="Journal" ACTION="Create">'
+            f"<DATE>{entry.date.strftime('%Y%m%d')}</DATE>"
+            "<VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>"
+            f"<VOUCHERNUMBER>{xml_escape(entry.entry_number)}</VOUCHERNUMBER>"
+            f"<NARRATION>{xml_escape(entry.narration or entry.entry_type)}</NARRATION>"
+            f"{''.join(ledger_xml)}"
+            "</VOUCHER>"
+            "</TALLYMESSAGE>"
+        )
+
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>"
+        "<BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME>"
+        f"<STATICVARIABLES><SVCURRENTCOMPANY>{xml_escape(current_outlet.name)}</SVCURRENTCOMPANY></STATICVARIABLES>"
+        "</REQUESTDESC><REQUESTDATA>"
+        f"{''.join(voucher_xml)}"
+        "</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>"
+    )
+    filename = f"tally-vouchers-{start.isoformat()}-{end.isoformat()}.xml"
+    return Response(
+        content=xml.encode("utf-8"),
+        media_type="application/xml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/retail-shortcuts")
@@ -1244,15 +2146,7 @@ def build_party_summary(db: Session, txns, balance):
 
 
 def ledger_delta(txn):
-    amount = Decimal(txn.amount or 0)
-
-    if txn.type in ["SALE", "PURCHASE", "OPENING"]:
-        return amount
-
-    if txn.type == "PAYMENT":
-        return -amount
-
-    return Decimal("0")
+    return ledger_delta_value(txn.type, txn.category, txn.amount)
 
 
 def receivable_delta(txn, settled_keys=None):
@@ -1267,25 +2161,11 @@ def receivable_delta(txn, settled_keys=None):
     ):
         return Decimal("0")
 
-    if txn.type == "SALE" or (txn.type == "OPENING" and txn.category == "RECEIVABLE"):
-        return amount
-
-    if txn.type == "PAYMENT" and txn.category == "RECEIVED":
-        return -amount
-
-    return Decimal("0")
+    return receivable_delta_value(txn.type, txn.category, amount)
 
 
 def payable_delta(txn):
-    amount = Decimal(txn.amount or 0)
-
-    if txn.type == "PURCHASE" or (txn.type == "OPENING" and txn.category == "PAYABLE"):
-        return amount
-
-    if txn.type == "PAYMENT" and txn.category == "PAID":
-        return -amount
-
-    return Decimal("0")
+    return payable_delta_value(txn.type, txn.category, txn.amount)
 
 
 def build_balance_sheet_rows_from_ledger(
@@ -2075,6 +2955,32 @@ def parse_decimal(value, default="0"):
         return Decimal(default)
 
 
+def create_reversal_transactions(db: Session, transactions, reason: str):
+    reversals = []
+    for transaction in transactions:
+        reversed_values = reversal_numeric_values(transaction.quantity, transaction.weight, transaction.amount)
+        reversal = models.Transaction(
+            id=uuid4(),
+            date=transaction.date,
+            outlet_id=transaction.outlet_id,
+            party_id=transaction.party_id,
+            type=transaction.type,
+            category=transaction.category,
+            item_type=transaction.item_type,
+            quantity=reversed_values["quantity"],
+            weight=reversed_values["weight"],
+            rate=transaction.rate,
+            amount=reversed_values["amount"],
+            payment_mode=transaction.payment_mode,
+            bill_number=transaction.bill_number,
+            source_ref=f"reversal:{transaction.id}",
+            reversal_of_id=transaction.id,
+        )
+        db.add(reversal)
+        reversals.append(reversal)
+    return reversals
+
+
 def serialize_dressed_stock_entry(entry):
     return {
         "id": str(entry.id),
@@ -2119,6 +3025,8 @@ def serialize_retail_bill(bill, items):
         "total_amount": float(bill.total_amount or 0),
         "paid_amount": float(bill.paid_amount or 0),
         "outstanding_amount": float(bill.outstanding_amount or 0),
+        "status": getattr(bill, "status", None) or "POSTED",
+        "void_reason": getattr(bill, "void_reason", None) or "",
         "party_balance": None,
         "notes": bill.notes or "",
         "items": [
@@ -2156,6 +3064,36 @@ def retail_party_balance_after(db: Session, party_id, outlet_id=None):
     return float(balance_after or 0)
 
 
+def party_receivable_balance(db: Session, party_id, outlet_id):
+    txns = db.query(models.Transaction).filter(
+        models.Transaction.party_id == party_id,
+        models.Transaction.outlet_id == outlet_id,
+    ).all()
+    return sum(
+        receivable_delta_value(txn.type, txn.category, txn.amount)
+        for txn in txns
+    )
+
+
+def ensure_party_credit_available(db: Session, party_id, outlet_id, additional_credit):
+    if not party_id or Decimal(additional_credit or 0) <= 0:
+        return
+    profile = db.query(models.PartyCreditProfile).filter(
+        models.PartyCreditProfile.party_id == party_id,
+        models.PartyCreditProfile.outlet_id == outlet_id,
+    ).first()
+    if not profile or not profile.block_on_limit or Decimal(profile.credit_limit or 0) <= 0:
+        return
+    current_balance = party_receivable_balance(db, party_id, outlet_id)
+    projected = current_balance + Decimal(additional_credit or 0)
+    if projected > Decimal(profile.credit_limit or 0):
+        available = max(Decimal("0"), Decimal(profile.credit_limit or 0) - current_balance)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Credit limit exceeded. Available credit is Rs {available:,.2f}.",
+        )
+
+
 def filter_party_ledger_transactions(db: Session, txns):
     return txns
 
@@ -2176,6 +3114,8 @@ def serialize_payment_receipt(receipt, balance_after=None):
         "payment_mode": receipt.payment_mode or "Cash",
         "amount": float(receipt.amount or 0),
         "balance_after": float(balance_after or 0),
+        "status": getattr(receipt, "status", None) or "POSTED",
+        "void_reason": getattr(receipt, "void_reason", None) or "",
         "notes": receipt.notes or ""
     }
 
@@ -2208,6 +3148,7 @@ def recompute_dressed_stock_remaining(db: Session, target_date, outlet_id=None):
         models.RetailBill.id == models.RetailBillItem.bill_id
     ).filter(
         models.RetailBill.date == target_date,
+        models.RetailBill.status != "VOID",
         models.RetailBillItem.line_type == "DRESSED"
     )
     if outlet_id:
@@ -2373,10 +3314,11 @@ def resolve_upload_date(row, date_col, fallback_date):
 
 
 @app.post("/entries/vendor")
-def create_vendor_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), current_outlet: models.Outlet = Depends(get_current_outlet)):
+def create_vendor_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
     target_date = parse_input_date(input_date)
     if not target_date:
         return {"error": "Select working date"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
 
     rows = payload.get("rows") or []
     if not rows:
@@ -2419,7 +3361,9 @@ def create_vendor_entries(payload: dict = Body(...), input_date: str = None, db:
                 skipped += 1
                 continue
 
-            db.add(models.Transaction(
+            ensure_party_credit_available(db, party_id, current_outlet.id, weight * rate)
+            transaction = models.Transaction(
+                id=uuid4(),
                 date=target_date,
                 outlet_id=current_outlet.id,
                 party_id=party_id,
@@ -2431,13 +3375,21 @@ def create_vendor_entries(payload: dict = Body(...), input_date: str = None, db:
                 rate=rate,
                 amount=weight * rate,
                 payment_mode="NA"
-            ))
+            )
+            db.add(transaction)
+            post_operational_transaction(db, transaction, user_id=user.id)
             seen_transactions.add(txn_key)
             inserted += 1
         except Exception as e:
             skipped += 1
             row_error(errors, index, str(e))
 
+    if inserted:
+        record_audit_event(
+            db, user=user, outlet_id=current_outlet.id, event_date=target_date,
+            entity_type="VENDOR_ENTRIES", action="CREATE",
+            after_data={"inserted": inserted, "skipped": skipped, "rows": rows},
+        )
     try:
         db.commit()
     except Exception as e:
@@ -2448,10 +3400,11 @@ def create_vendor_entries(payload: dict = Body(...), input_date: str = None, db:
 
 
 @app.post("/entries/dealer")
-def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), current_outlet: models.Outlet = Depends(get_current_outlet)):
+def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
     target_date = parse_input_date(input_date)
     if not target_date:
         return {"error": "Select working date"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
 
     rows = payload.get("rows") or []
     if not rows:
@@ -2502,7 +3455,8 @@ def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db:
                 skipped += 1
                 continue
 
-            db.add(models.Transaction(
+            transaction = models.Transaction(
+                id=uuid4(),
                 date=target_date,
                 outlet_id=current_outlet.id,
                 party_id=party_id,
@@ -2515,7 +3469,9 @@ def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db:
                 amount=weight * rate,
                 payment_mode="NA",
                 bill_number=bill_number
-            ))
+            )
+            db.add(transaction)
+            post_operational_transaction(db, transaction, user_id=user.id)
             seen_transactions.add(txn_key)
 
             if transport_mortality_nag > 0 or transport_mortality_weight > 0:
@@ -2561,6 +3517,12 @@ def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db:
             skipped += 1
             row_error(errors, index, str(e))
 
+    if inserted:
+        record_audit_event(
+            db, user=user, outlet_id=current_outlet.id, event_date=target_date,
+            entity_type="DEALER_ENTRIES", action="CREATE",
+            after_data={"inserted": inserted, "skipped": skipped, "rows": rows},
+        )
     try:
         db.commit()
     except Exception as e:
@@ -2571,10 +3533,11 @@ def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db:
 
 
 @app.post("/entries/payment")
-def create_payment_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), current_outlet: models.Outlet = Depends(get_current_outlet)):
+def create_payment_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
     target_date = parse_input_date(input_date)
     if not target_date:
         return {"error": "Select working date"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
 
     rows = payload.get("rows") or []
     if not rows:
@@ -2614,7 +3577,8 @@ def create_payment_entries(payload: dict = Body(...), input_date: str = None, db
                 skipped += 1
                 continue
 
-            db.add(models.Transaction(
+            transaction = models.Transaction(
+                id=uuid4(),
                 date=target_date,
                 outlet_id=current_outlet.id,
                 party_id=party_id,
@@ -2622,13 +3586,21 @@ def create_payment_entries(payload: dict = Body(...), input_date: str = None, db
                 category=direction,
                 amount=amount,
                 payment_mode=payment_mode
-            ))
+            )
+            db.add(transaction)
+            post_operational_transaction(db, transaction, user_id=user.id)
             seen_payments.add(payment_key)
             inserted += 1
         except Exception as e:
             skipped += 1
             row_error(errors, index, str(e))
 
+    if inserted:
+        record_audit_event(
+            db, user=user, outlet_id=current_outlet.id, event_date=target_date,
+            entity_type="PAYMENT_ENTRIES", action="CREATE",
+            after_data={"inserted": inserted, "skipped": skipped, "rows": rows},
+        )
     try:
         db.commit()
     except Exception as e:
@@ -2639,10 +3611,11 @@ def create_payment_entries(payload: dict = Body(...), input_date: str = None, db
 
 
 @app.post("/entries/mortality")
-def create_mortality_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), current_outlet: models.Outlet = Depends(get_current_outlet)):
+def create_mortality_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
     target_date = parse_input_date(input_date)
     if not target_date:
         return {"error": "Select working date"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
 
     rows = payload.get("rows") or []
     if not rows:
@@ -2690,7 +3663,8 @@ def create_mortality_entries(payload: dict = Body(...), input_date: str = None, 
                 skipped += 1
                 continue
 
-            db.add(models.Transaction(
+            transaction = models.Transaction(
+                id=uuid4(),
                 date=target_date,
                 outlet_id=current_outlet.id,
                 party_id=None,
@@ -2702,7 +3676,9 @@ def create_mortality_entries(payload: dict = Body(...), input_date: str = None, 
                 rate=0,
                 amount=0,
                 payment_mode="NA"
-            ))
+            )
+            db.add(transaction)
+            post_operational_transaction(db, transaction, user_id=user.id)
             seen_transactions.add(txn_key)
             inserted += 1
         except Exception as e:
@@ -2719,10 +3695,11 @@ def create_mortality_entries(payload: dict = Body(...), input_date: str = None, 
 
 
 @app.post("/entries/opening-balance")
-def create_opening_balance_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), current_outlet: models.Outlet = Depends(get_current_outlet)):
+def create_opening_balance_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), user: models.User = Depends(require_owner), current_outlet: models.Outlet = Depends(get_current_outlet)):
     target_date = parse_input_date(input_date)
     if not target_date:
         return {"error": "Select working date"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
 
     rows = payload.get("rows") or []
     if not rows:
@@ -2769,7 +3746,8 @@ def create_opening_balance_entries(payload: dict = Body(...), input_date: str = 
                 skipped += 1
                 continue
 
-            db.add(models.Transaction(
+            transaction = models.Transaction(
+                id=uuid4(),
                 date=target_date,
                 outlet_id=current_outlet.id,
                 party_id=party_id,
@@ -2777,7 +3755,9 @@ def create_opening_balance_entries(payload: dict = Body(...), input_date: str = 
                 category=balance_type,
                 amount=amount,
                 payment_mode="NA"
-            ))
+            )
+            db.add(transaction)
+            post_operational_transaction(db, transaction, user_id=user.id)
             seen_opening.add(opening_key)
             inserted += 1
         except Exception as e:
@@ -2794,10 +3774,11 @@ def create_opening_balance_entries(payload: dict = Body(...), input_date: str = 
 
 
 @app.post("/entries/opening-stock")
-def create_opening_stock_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), current_outlet: models.Outlet = Depends(get_current_outlet)):
+def create_opening_stock_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), user: models.User = Depends(require_owner), current_outlet: models.Outlet = Depends(get_current_outlet)):
     target_date = parse_input_date(input_date)
     if not target_date:
         return {"error": "Select working date"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
 
     rows = payload.get("rows") or []
     if not rows:
@@ -2852,7 +3833,7 @@ def create_opening_stock_entries(payload: dict = Body(...), input_date: str = No
 
 
 @app.post("/upload/vendor")
-def upload_vendor(file: UploadFile = File(...), preview: bool = False, input_date: str = None, db: Session = Depends(get_db)):
+def upload_vendor(file: UploadFile = File(...), preview: bool = False, input_date: str = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
 
     import io
     import hashlib
@@ -2946,6 +3927,7 @@ def upload_vendor(file: UploadFile = File(...), preview: bool = False, input_dat
                 skipped += 1
                 row_error(errors, row_number, "Invalid or missing date")
                 continue
+            ensure_business_date_open(db, current_outlet.id, date)
             item_type = str(row[item_col]).strip()
             category = get_optional_row_value(row, ["CATEGORY"])
             if weight <= 0 or rate <= 0 or (quantity is not None and quantity < 0):
@@ -2959,6 +3941,7 @@ def upload_vendor(file: UploadFile = File(...), preview: bool = False, input_dat
             # --- Duplicate check ---
             existing_txn = db.query(models.Transaction).filter_by(
                 date=date,
+                outlet_id=current_outlet.id,
                 party_id=party_id,
                 weight=weight,
                 rate=rate,
@@ -2974,8 +3957,11 @@ def upload_vendor(file: UploadFile = File(...), preview: bool = False, input_dat
                 continue
 
             # --- Create sale transaction ---
+            ensure_party_credit_available(db, party_id, current_outlet.id, Decimal(str(weight)) * Decimal(str(rate)))
             txn = models.Transaction(
+                id=uuid4(),
                 date=date,
+                outlet_id=current_outlet.id,
                 party_id=party_id,
                 type="SALE",
                 category=category,
@@ -2988,6 +3974,7 @@ def upload_vendor(file: UploadFile = File(...), preview: bool = False, input_dat
             )
 
             db.add(txn)
+            post_operational_transaction(db, txn, user_id=user.id)
             seen_transactions.add(txn_key)
             inserted += 1
 
@@ -3004,6 +3991,7 @@ def upload_vendor(file: UploadFile = File(...), preview: bool = False, input_dat
 
         file_record = models.UploadedFile(
             file_hash=file_hash,
+            outlet_id=current_outlet.id,
             file_type="vendor"
         )
         db.add(file_record)
@@ -3016,7 +4004,7 @@ def upload_vendor(file: UploadFile = File(...), preview: bool = False, input_dat
     return upload_result(inserted, skipped, errors)
 
 @app.post("/upload/dealer")
-def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_date: str = None, db: Session = Depends(get_db)):
+def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_date: str = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
 
     import io
     import hashlib
@@ -3119,6 +4107,7 @@ def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_dat
                 skipped += 1
                 row_error(errors, row_number, "Invalid or missing date")
                 continue
+            ensure_business_date_open(db, current_outlet.id, date)
 
             if weight <= 0 or rate <= 0 or (quantity is not None and quantity < 0):
                 skipped += 1
@@ -3131,6 +4120,7 @@ def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_dat
             # --- Duplicate check (CORRECT TYPE) ---
             existing_txn = db.query(models.Transaction).filter_by(
                 date=date,
+                outlet_id=current_outlet.id,
                 party_id=party_id,
                 weight=weight,
                 rate=rate,
@@ -3148,7 +4138,9 @@ def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_dat
 
             # --- Create purchase transaction ---
             txn = models.Transaction(
+                id=uuid4(),
                 date=date,
+                outlet_id=current_outlet.id,
                 party_id=party_id,
                 type="PURCHASE",
                 category=None,
@@ -3162,6 +4154,7 @@ def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_dat
             )
 
             db.add(txn)
+            post_operational_transaction(db, txn, user_id=user.id)
             seen_transactions.add(txn_key)
             inserted += 1
 
@@ -3178,6 +4171,7 @@ def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_dat
 
         file_record = models.UploadedFile(
             file_hash=file_hash,
+            outlet_id=current_outlet.id,
             file_type="dealer"
         )
         db.add(file_record)
@@ -3191,7 +4185,7 @@ def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_dat
 
 
 @app.post("/upload/payment")
-def upload_payment(file: UploadFile = File(...), preview: bool = False, input_date: str = None, db: Session = Depends(get_db)):
+def upload_payment(file: UploadFile = File(...), preview: bool = False, input_date: str = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
 
     import io
     import hashlib
@@ -3257,6 +4251,7 @@ def upload_payment(file: UploadFile = File(...), preview: bool = False, input_da
                 skipped += 1
                 row_error(errors, row_number, "Invalid or missing date")
                 continue
+            ensure_business_date_open(db, current_outlet.id, target_date)
             payment_mode = str(row["PAYMENT_MODE"]).strip() if not pd.isna(row["PAYMENT_MODE"]) else "NA"
             direction = normalize_payment_direction(row["DIRECTION"])
 
@@ -3269,6 +4264,7 @@ def upload_payment(file: UploadFile = File(...), preview: bool = False, input_da
 
             existing_payment = db.query(models.Transaction).filter_by(
                 date=target_date,
+                outlet_id=current_outlet.id,
                 party_id=party_id,
                 type="PAYMENT",
                 amount=amount,
@@ -3282,7 +4278,9 @@ def upload_payment(file: UploadFile = File(...), preview: bool = False, input_da
                 continue
 
             txn = models.Transaction(
+                id=uuid4(),
                 date=target_date,
+                outlet_id=current_outlet.id,
                 party_id=party_id,
                 type="PAYMENT",
                 category=direction,
@@ -3291,6 +4289,7 @@ def upload_payment(file: UploadFile = File(...), preview: bool = False, input_da
             )
 
             db.add(txn)
+            post_operational_transaction(db, txn, user_id=user.id)
             seen_payments.add(payment_key)
             inserted += 1
 
@@ -3306,6 +4305,7 @@ def upload_payment(file: UploadFile = File(...), preview: bool = False, input_da
 
         file_record = models.UploadedFile(
             file_hash=file_hash,
+            outlet_id=current_outlet.id,
             file_type="payment"
         )
         db.add(file_record)
@@ -3319,7 +4319,7 @@ def upload_payment(file: UploadFile = File(...), preview: bool = False, input_da
 
 
 @app.post("/upload/opening-balance")
-def upload_opening_balance(file: UploadFile = File(...), preview: bool = False, db: Session = Depends(get_db)):
+def upload_opening_balance(file: UploadFile = File(...), preview: bool = False, db: Session = Depends(get_db), user: models.User = Depends(require_owner), current_outlet: models.Outlet = Depends(get_current_outlet)):
 
     import io
     import hashlib
@@ -3387,6 +4387,7 @@ def upload_opening_balance(file: UploadFile = File(...), preview: bool = False, 
             party_name = str(row[party_col]).strip()
             amount = Decimal(str(float(row[amount_col])))
             target_date = pd.to_datetime(row[date_col], dayfirst=True).date()
+            ensure_business_date_open(db, current_outlet.id, target_date)
             balance_type = str(row[balance_type_col]).strip().upper()
 
             if balance_type in ["RECEIVABLE", "RECEIVE", "CUSTOMER", "VENDOR"]:
@@ -3409,6 +4410,7 @@ def upload_opening_balance(file: UploadFile = File(...), preview: bool = False, 
 
             existing_opening = db.query(models.Transaction).filter_by(
                 date=target_date,
+                outlet_id=current_outlet.id,
                 party_id=party_id,
                 type="OPENING",
                 category=balance_type
@@ -3420,7 +4422,9 @@ def upload_opening_balance(file: UploadFile = File(...), preview: bool = False, 
                 continue
 
             txn = models.Transaction(
+                id=uuid4(),
                 date=target_date,
+                outlet_id=current_outlet.id,
                 party_id=party_id,
                 type="OPENING",
                 category=balance_type,
@@ -3429,6 +4433,7 @@ def upload_opening_balance(file: UploadFile = File(...), preview: bool = False, 
             )
 
             db.add(txn)
+            post_operational_transaction(db, txn, user_id=user.id)
             seen_opening.add(opening_key)
             inserted += 1
 
@@ -3444,6 +4449,7 @@ def upload_opening_balance(file: UploadFile = File(...), preview: bool = False, 
 
         file_record = models.UploadedFile(
             file_hash=file_hash,
+            outlet_id=current_outlet.id,
             file_type="opening_balance"
         )
         db.add(file_record)
@@ -3456,7 +4462,7 @@ def upload_opening_balance(file: UploadFile = File(...), preview: bool = False, 
 
 
 @app.post("/upload/opening-stock")
-def upload_opening_stock(file: UploadFile = File(...), preview: bool = False, db: Session = Depends(get_db)):
+def upload_opening_stock(file: UploadFile = File(...), preview: bool = False, db: Session = Depends(get_db), user: models.User = Depends(require_owner), current_outlet: models.Outlet = Depends(get_current_outlet)):
 
     import io
     import hashlib
@@ -3521,6 +4527,7 @@ def upload_opening_stock(file: UploadFile = File(...), preview: bool = False, db
                 continue
 
             target_date = pd.to_datetime(row[date_col], dayfirst=True).date()
+            ensure_business_date_open(db, current_outlet.id, target_date)
             item_type = str(row[item_col]).strip()
             opening_weight = Decimal(str(float(row[weight_col])))
             opening_quantity = Decimal(str(float(row[quantity_col]))) if quantity_col and not pd.isna(row[quantity_col]) else None
@@ -3532,6 +4539,7 @@ def upload_opening_stock(file: UploadFile = File(...), preview: bool = False, db
 
             existing_stock = db.query(models.ItemOpeningStock).filter_by(
                 date=target_date,
+                outlet_id=current_outlet.id,
                 item_type=item_type
             ).first()
 
@@ -3542,6 +4550,7 @@ def upload_opening_stock(file: UploadFile = File(...), preview: bool = False, db
 
             db.add(models.ItemOpeningStock(
                 date=target_date,
+                outlet_id=current_outlet.id,
                 item_type=item_type,
                 opening_quantity=opening_quantity,
                 opening_weight=opening_weight
@@ -3561,6 +4570,7 @@ def upload_opening_stock(file: UploadFile = File(...), preview: bool = False, db
 
         file_record = models.UploadedFile(
             file_hash=file_hash,
+            outlet_id=current_outlet.id,
             file_type="opening_stock"
         )
         db.add(file_record)
@@ -3573,24 +4583,26 @@ def upload_opening_stock(file: UploadFile = File(...), preview: bool = False, db
 
 
 @app.post("/process-day")
-def process_day(input_date: str, actual_stock: float, db: Session = Depends(get_db)):
+def process_day(input_date: str, actual_stock: float, db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
 
     target_date = parse_input_date(input_date)
     if not target_date:
         return {"error": "Invalid date format"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
 
     # --- Validate stock ---
     if actual_stock is None or actual_stock < 0:
         return {"error": "Invalid actual stock"}
 
     # --- Prevent duplicate processing ---
-    existing = db.query(models.DailyStock).filter_by(date=target_date).first()
+    existing = db.query(models.DailyStock).filter_by(date=target_date, outlet_id=current_outlet.id).first()
     if existing:
         return {"error": "Day already processed"}
 
     try:
         # --- Get previous day's closing ---
         prev_stock = db.query(models.DailyStock).filter(
+            models.DailyStock.outlet_id == current_outlet.id,
             models.DailyStock.date < target_date
         ).order_by(models.DailyStock.date.desc()).first()
 
@@ -3599,12 +4611,14 @@ def process_day(input_date: str, actual_stock: float, db: Session = Depends(get_
         # --- Total purchases ---
         purchase_weight = db.query(func.sum(models.Transaction.weight)).filter(
             models.Transaction.date == target_date,
+            models.Transaction.outlet_id == current_outlet.id,
             models.Transaction.type == "PURCHASE"
         ).scalar() or 0
 
         # --- Total sales ---
         sales_weight = db.query(func.sum(models.Transaction.weight)).filter(
             models.Transaction.date == target_date,
+            models.Transaction.outlet_id == current_outlet.id,
             models.Transaction.type == "SALE"
         ).scalar() or 0
 
@@ -3621,6 +4635,7 @@ def process_day(input_date: str, actual_stock: float, db: Session = Depends(get_
         # --- Save ---
         daily = models.DailyStock(
             date=target_date,
+            outlet_id=current_outlet.id,
             opening_weight=opening_stock,
             purchase_weight=purchase_weight,
             sales_weight=sales_weight,
@@ -3630,6 +4645,11 @@ def process_day(input_date: str, actual_stock: float, db: Session = Depends(get_
         )
 
         db.add(daily)
+        record_audit_event(
+            db, user=user, outlet_id=current_outlet.id, event_date=target_date,
+            entity_type="PROCESS_DAY", entity_id=target_date, action="CREATE",
+            after_data={"actual_stock": actual_stock_dec, "expected_stock": expected_stock},
+        )
         db.commit()
 
     except Exception as e:
@@ -3648,10 +4668,11 @@ def process_day(input_date: str, actual_stock: float, db: Session = Depends(get_
 
 
 @app.post("/process-day/items")
-def process_day_items(input_date: str, actual_stock: list[dict], db: Session = Depends(get_db), current_outlet: models.Outlet = Depends(get_current_outlet)):
+def process_day_items(input_date: str, actual_stock: list[dict], db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
     target_date = parse_input_date(input_date)
     if not target_date:
         return {"error": "Invalid date format"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
 
     if not actual_stock:
         return {"error": "Enter actual stock for at least one hen type"}
@@ -3827,6 +4848,16 @@ def process_day_items(input_date: str, actual_stock: list[dict], db: Session = D
                 leakage=total_leakage_weight
             ))
 
+        record_audit_event(
+            db,
+            user=user,
+            outlet_id=current_outlet.id,
+            event_date=target_date,
+            entity_type="PROCESS_DAY",
+            entity_id=target_date,
+            action="REPROCESS" if replaced_existing else "CREATE",
+            after_data={"input": actual_stock, "calculated": results},
+        )
         db.commit()
 
     except Exception as e:
@@ -5141,10 +6172,11 @@ def list_dressed_stock(date: str | None = None, db: Session = Depends(get_db), c
 
 
 @app.post("/dressed-stock")
-def create_dressed_stock_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), current_outlet: models.Outlet = Depends(get_current_outlet)):
+def create_dressed_stock_entries(payload: dict = Body(...), input_date: str = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
     target_date = parse_input_date(input_date)
     if not target_date:
         return {"error": "Select working date"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
 
     rows = payload.get("rows") or []
     if not rows:
@@ -5211,10 +6243,11 @@ def get_payment_receipt(receipt_id: UUID, db: Session = Depends(get_db), current
 
 
 @app.post("/payment-receipts")
-def create_payment_receipt(payload: dict = Body(...), db: Session = Depends(get_db), current_outlet: models.Outlet = Depends(get_current_outlet)):
+def create_payment_receipt(payload: dict = Body(...), db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
     target_date = parse_input_date(payload.get("date"))
     if not target_date:
         return {"error": "Invalid receipt date"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
 
     party_name = str(payload.get("party_name") or "").strip()
     if not party_name:
@@ -5267,6 +6300,23 @@ def create_payment_receipt(payload: dict = Body(...), db: Session = Depends(get_
         bill_number=receipt_number,
         source_ref=f"payment-receipt:{receipt.id}"
     ))
+    record_audit_event(
+        db,
+        user=user,
+        outlet_id=current_outlet.id,
+        event_date=target_date,
+        entity_type="PAYMENT_RECEIPT",
+        entity_id=receipt.id,
+        action="CREATE",
+        after_data={
+            "receipt_number": receipt_number,
+            "party_name": party_name,
+            "direction": direction,
+            "payment_mode": payment_mode,
+            "amount": amount,
+        },
+    )
+    post_payment_receipt(db, receipt, user_id=user.id)
 
     try:
         db.commit()
@@ -5294,10 +6344,17 @@ def update_payment_receipt(receipt_id: UUID, payload: dict = Body(...), db: Sess
     ).first()
     if not receipt:
         return {"error": "Payment receipt not found"}
+    if (receipt.status or "POSTED").upper() == "VOID":
+        return {"error": "A voided payment receipt cannot be edited"}
+
+    before_receipt = audit_json(receipt)
 
     target_date = parse_input_date(payload.get("date"))
     if not target_date:
         return {"error": "Invalid receipt date"}
+    ensure_business_date_open(db, current_outlet.id, receipt.date)
+    if target_date != receipt.date:
+        ensure_business_date_open(db, current_outlet.id, target_date)
 
     party_name = str(payload.get("party_name") or "").strip()
     if not party_name:
@@ -5365,6 +6422,26 @@ def update_payment_receipt(receipt_id: UUID, payload: dict = Body(...), db: Sess
         bill_number=receipt_number,
         source_ref=f"payment-receipt:{receipt.id}"
     ))
+    record_audit_event(
+        db,
+        user=user,
+        outlet_id=current_outlet.id,
+        event_date=target_date,
+        entity_type="PAYMENT_RECEIPT",
+        entity_id=receipt.id,
+        action="UPDATE",
+        before_data=before_receipt,
+        after_data=audit_json(receipt),
+    )
+    reverse_reference_journal(
+        db,
+        outlet_id=current_outlet.id,
+        reference_type="PAYMENT_RECEIPT",
+        reference_id=receipt.id,
+        user_id=user.id,
+        reason="Receipt updated",
+    )
+    post_payment_receipt(db, receipt, user_id=user.id)
 
     try:
         db.commit()
@@ -5382,6 +6459,70 @@ def update_payment_receipt(receipt_id: UUID, payload: dict = Body(...), db: Sess
     ).all()
     balance_after, _ = build_ledger(db, txns)
     return {"receipt": serialize_payment_receipt(receipt, balance_after)}
+
+
+@app.post("/payment-receipts/{receipt_id}/void")
+def void_payment_receipt(
+    receipt_id: UUID,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    receipt = db.query(models.PaymentReceipt).filter(
+        models.PaymentReceipt.id == receipt_id,
+        models.PaymentReceipt.outlet_id == current_outlet.id,
+    ).first()
+    if not receipt:
+        return {"error": "Payment receipt not found"}
+    if (receipt.status or "POSTED").upper() == "VOID":
+        return {"error": "Payment receipt is already void"}
+
+    reason = str(payload.get("reason") or "").strip()
+    if len(reason) < 3:
+        return {"error": "Enter a clear cancellation reason"}
+    ensure_business_date_open(db, current_outlet.id, receipt.date)
+
+    original_transactions = db.query(models.Transaction).filter(
+        models.Transaction.outlet_id == current_outlet.id,
+        models.Transaction.source_ref == f"payment-receipt:{receipt.id}",
+    ).all()
+    if not original_transactions:
+        return {"error": "Receipt transaction was not found"}
+
+    before = audit_json(receipt)
+    reversals = create_reversal_transactions(db, original_transactions, reason)
+    reverse_reference_journal(
+        db,
+        outlet_id=current_outlet.id,
+        reference_type="PAYMENT_RECEIPT",
+        reference_id=receipt.id,
+        user_id=user.id,
+        reason=reason,
+    )
+    receipt.status = "VOID"
+    receipt.voided_at = datetime.utcnow()
+    receipt.voided_by_user_id = user.id
+    receipt.void_reason = reason
+    record_audit_event(
+        db,
+        user=user,
+        outlet_id=current_outlet.id,
+        event_date=receipt.date,
+        entity_type="PAYMENT_RECEIPT",
+        entity_id=receipt.id,
+        action="VOID",
+        reason=reason,
+        before_data=before,
+        after_data=audit_json(receipt),
+        context_data={"reversal_count": len(reversals)},
+    )
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        return {"error": "Voiding payment receipt failed", "details": str(exc)}
+    return {"status": "success", "message": "Payment receipt cancelled with a reversal entry"}
 
 
 @app.get("/retail-bills/{bill_id}")
@@ -5403,10 +6544,11 @@ def get_retail_bill(bill_id: UUID, db: Session = Depends(get_db), current_outlet
 
 
 @app.post("/retail-bills")
-def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db), current_outlet: models.Outlet = Depends(get_current_outlet)):
+def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db), user: models.User = Depends(get_current_user), current_outlet: models.Outlet = Depends(get_current_outlet)):
     target_date = parse_input_date(payload.get("date"))
     if not target_date:
         return {"error": "Invalid bill date"}
+    ensure_business_date_open(db, current_outlet.id, target_date)
 
     raw_items = payload.get("items") or []
     if not raw_items:
@@ -5507,6 +6649,8 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db),
     if outstanding_amount > 0 and payment_mode.strip().upper() == "CASH":
         payment_mode = "Credit"
 
+    ensure_party_credit_available(db, party_id, current_outlet.id, outstanding_amount)
+
     transaction_party_id = party_id if party_id else None
 
     bill = models.RetailBill(
@@ -5595,6 +6739,26 @@ def create_retail_bill(payload: dict = Body(...), db: Session = Depends(get_db),
             source_ref=f"retail-payment:{bill.id}"
         ))
 
+    record_audit_event(
+        db,
+        user=user,
+        outlet_id=current_outlet.id,
+        event_date=target_date,
+        entity_type="RETAIL_BILL",
+        entity_id=bill.id,
+        action="CREATE",
+        after_data={
+            "bill_number": bill_number,
+            "customer_name": customer_name,
+            "payment_mode": payment_mode,
+            "total_amount": total_amount,
+            "paid_amount": paid_amount,
+            "outstanding_amount": outstanding_amount,
+            "items": normalized_items,
+        },
+    )
+    post_retail_bill(db, bill, user_id=user.id)
+
     recompute_dressed_stock_remaining(db, target_date, current_outlet.id)
     db.commit()
     db.refresh(bill)
@@ -5621,10 +6785,21 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
     ).first()
     if not bill:
         return {"error": "Retail bill not found"}
+    if (bill.status or "POSTED").upper() == "VOID":
+        return {"error": "A voided retail bill cannot be edited"}
+
+    before_bill = audit_json(bill)
+    before_items = [
+        audit_json(item)
+        for item in db.query(models.RetailBillItem).filter(models.RetailBillItem.bill_id == bill.id).all()
+    ]
 
     target_date = parse_input_date(payload.get("date"))
     if not target_date:
         return {"error": "Invalid bill date"}
+    ensure_business_date_open(db, current_outlet.id, bill.date)
+    if target_date != bill.date:
+        ensure_business_date_open(db, current_outlet.id, target_date)
 
     raw_items = payload.get("items") or []
     if not raw_items:
@@ -5741,6 +6916,13 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
     if outstanding_amount > 0 and payment_mode.strip().upper() == "CASH":
         payment_mode = "Credit"
 
+    additional_credit = (
+        outstanding_amount - Decimal(bill.outstanding_amount or 0)
+        if party_id == bill.party_id
+        else outstanding_amount
+    )
+    ensure_party_credit_available(db, party_id, current_outlet.id, additional_credit)
+
     transaction_party_id = party_id if party_id else None
 
     previous_date = bill.date
@@ -5837,6 +7019,27 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
             source_ref=f"retail-payment:{bill.id}"
         ))
 
+    record_audit_event(
+        db,
+        user=user,
+        outlet_id=current_outlet.id,
+        event_date=target_date,
+        entity_type="RETAIL_BILL",
+        entity_id=bill.id,
+        action="UPDATE",
+        before_data={"bill": before_bill, "items": before_items},
+        after_data={"bill": audit_json(bill), "items": normalized_items},
+    )
+    reverse_reference_journal(
+        db,
+        outlet_id=current_outlet.id,
+        reference_type="RETAIL_BILL",
+        reference_id=bill.id,
+        user_id=user.id,
+        reason="Bill updated",
+    )
+    post_retail_bill(db, bill, user_id=user.id)
+
     recompute_dressed_stock_remaining(db, previous_date, current_outlet.id)
     if previous_date != target_date:
         recompute_dressed_stock_remaining(db, target_date, current_outlet.id)
@@ -5859,6 +7062,78 @@ def update_retail_bill(bill_id: UUID, payload: dict = Body(...), db: Session = D
         "status": "success",
         "message": "Retail bill updated",
         "bill": bill_data
+    }
+
+
+@app.post("/retail-bills/{bill_id}/void")
+def void_retail_bill(
+    bill_id: UUID,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_owner),
+    current_outlet: models.Outlet = Depends(get_current_outlet),
+):
+    bill = db.query(models.RetailBill).filter(
+        models.RetailBill.id == bill_id,
+        models.RetailBill.outlet_id == current_outlet.id,
+    ).first()
+    if not bill:
+        return {"error": "Retail bill not found"}
+    if (bill.status or "POSTED").upper() == "VOID":
+        return {"error": "Retail bill is already void"}
+
+    reason = str(payload.get("reason") or "").strip()
+    if len(reason) < 3:
+        return {"error": "Enter a clear cancellation reason"}
+    ensure_business_date_open(db, current_outlet.id, bill.date)
+
+    original_transactions = db.query(models.Transaction).filter(
+        models.Transaction.outlet_id == current_outlet.id,
+        or_(
+            models.Transaction.source_ref.like(f"retail-bill:{bill.id}:%"),
+            models.Transaction.source_ref == f"retail-payment:{bill.id}",
+        ),
+    ).all()
+    if not original_transactions:
+        return {"error": "Bill transactions were not found"}
+
+    before = audit_json(bill)
+    reversals = create_reversal_transactions(db, original_transactions, reason)
+    reverse_reference_journal(
+        db,
+        outlet_id=current_outlet.id,
+        reference_type="RETAIL_BILL",
+        reference_id=bill.id,
+        user_id=user.id,
+        reason=reason,
+    )
+    bill.status = "VOID"
+    bill.voided_at = datetime.utcnow()
+    bill.voided_by_user_id = user.id
+    bill.void_reason = reason
+    record_audit_event(
+        db,
+        user=user,
+        outlet_id=current_outlet.id,
+        event_date=bill.date,
+        entity_type="RETAIL_BILL",
+        entity_id=bill.id,
+        action="VOID",
+        reason=reason,
+        before_data=before,
+        after_data=audit_json(bill),
+        context_data={"reversal_count": len(reversals)},
+    )
+    recompute_dressed_stock_remaining(db, bill.date, current_outlet.id)
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        return {"error": "Voiding retail bill failed", "details": str(exc)}
+    return {
+        "status": "success",
+        "message": "Retail bill cancelled with reversal entries",
+        "reprocess_required": True,
     }
 
 

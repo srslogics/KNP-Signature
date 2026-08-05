@@ -93,7 +93,14 @@ async function apiCall(url, method = "GET", body = null, headers = {}, apiOption
       }
 
       if (!res.ok) {
-        throw new Error(`API error: ${res.status}`);
+        let message = `API error: ${res.status}`;
+        try {
+          const payload = await res.clone().json();
+          message = String(payload?.error || payload?.detail || message);
+        } catch (e) {
+          // Keep the HTTP fallback when the response is not JSON.
+        }
+        throw new Error(message);
       }
 
       const data = await res.json();
