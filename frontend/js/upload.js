@@ -542,13 +542,13 @@ function buildDealerWhatsAppMessage(row, workingDate, oldBalance = 0) {
   return [
     `Dealer Purchase - ${formatProcessDayDisplayDate(workingDate)}`,
     `Dealer: ${formatManualEntryValue(row.dealer)}`,
-    `Old Balance: Rs ${formatManualCurrency(oldBalance)}`,
     `Bill No: ${formatManualEntryValue(row.bill_no)}`,
     `Hen Type: ${formatManualEntryValue(row.hen_type)}`,
     `NAG: ${formatManualEntryValue(row.nag, "0")}`,
     `Kgs: ${formatManualEntryValue(row.kgs, "0")}`,
     `Rate/kg: ${formatManualEntryValue(row.rate_per_kg, "0")}`,
     `Amount: Rs ${formatManualCurrency(amount)}`,
+    `Old Balance: Rs ${formatManualCurrency(oldBalance)}`,
     `Transport NAG: ${formatManualEntryValue(row.transport_mortality_nag, "0")}`,
     `Transport KG: ${formatManualEntryValue(row.transport_mortality_weight, "0")}`
   ].join("\n");
