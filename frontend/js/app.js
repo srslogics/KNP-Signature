@@ -1538,7 +1538,7 @@ function loadPage(page) {
             <div class="report-actions">
               <button onclick="downloadReport('excel')">Download Excel</button>
               <button onclick="downloadReport('pdf')">Download PDF</button>
-              <button type="button" onclick="shareReportImage()">Share Image</button>
+              <button type="button" id="shareReportImageButton" onclick="shareReportImage()">Share Image</button>
             </div>
           </div>
 

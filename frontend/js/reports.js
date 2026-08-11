@@ -1,4 +1,20 @@
 let reportPartySuggestTimer = null;
+let pendingReportImageShare = null;
+
+function getReportImageShareButton() {
+  return document.getElementById("shareReportImageButton");
+}
+
+function clearPendingReportImageShare() {
+  pendingReportImageShare = null;
+  const button = getReportImageShareButton();
+  if (button) button.textContent = "Share Image";
+}
+
+function getReportImageShareKey(request) {
+  const selectedOutletId = typeof getSelectedOutletId === "function" ? getSelectedOutletId() : "";
+  return `${selectedOutletId}|${request.params.toString()}`;
+}
 
 function dedupeReportPartyResults(parties) {
   const merged = new Map();
@@ -22,6 +38,7 @@ function dedupeReportPartyResults(parties) {
 }
 
 function toggleReportFields() {
+  clearPendingReportImageShare();
   const reportType = document.getElementById("reportType")?.value;
   const partyInput = document.getElementById("reportParty");
   const startDate = document.getElementById("reportStartDate");
@@ -239,15 +256,59 @@ function downloadReportPng(file) {
   setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
+async function copyReportImageAndOpenWhatsApp() {
+  const pending = pendingReportImageShare;
+  if (!pending) return;
+
+  let clipboardPromise = null;
+  if (navigator.clipboard?.write && window.ClipboardItem) {
+    try {
+      // Start the protected clipboard action immediately from this second click.
+      clipboardPromise = navigator.clipboard.write([
+        new ClipboardItem({ "image/png": pending.blob })
+      ]);
+    } catch (clipboardError) {
+      console.warn("Image clipboard unavailable", clipboardError);
+    }
+  }
+
+  const whatsappWindow = window.open("https://web.whatsapp.com/", "_blank");
+  let copied = false;
+  if (clipboardPromise) {
+    try {
+      await clipboardPromise;
+      copied = true;
+    } catch (clipboardError) {
+      console.warn("Image clipboard unavailable", clipboardError);
+    }
+  }
+
+  if (!copied) downloadReportPng(pending.file);
+  clearPendingReportImageShare();
+
+  if (copied) {
+    showToast(whatsappWindow
+      ? "Report copied. In WhatsApp press Ctrl+V (Cmd+V on Mac), then Send."
+      : "Report copied. Open WhatsApp Web and paste it with Ctrl+V (Cmd+V on Mac)."
+    );
+  } else {
+    showToast(whatsappWindow
+      ? "Clipboard was blocked. Attach the downloaded image in WhatsApp."
+      : "Image downloaded. Open WhatsApp and attach it."
+    );
+  }
+}
+
 async function shareReportImage() {
   const request = buildReportRequest("json");
   if (!request) return;
 
-  const whatsappWindow = window.open("about:blank", "_blank");
-  if (whatsappWindow) {
-    whatsappWindow.document.title = "Preparing report";
-    whatsappWindow.document.body.innerHTML = "<p style='font-family:Arial;padding:24px'>Preparing report image...</p>";
+  const shareKey = getReportImageShareKey(request);
+  if (pendingReportImageShare?.key === shareKey) {
+    await copyReportImageAndOpenWhatsApp();
+    return;
   }
+  clearPendingReportImageShare();
 
   let surface = null;
   try {
@@ -294,30 +355,13 @@ async function shareReportImage() {
       .replace(/^-+|-+$/g, "")
       .toLowerCase();
     const file = new File([blob], `${safeName || "report"}.png`, { type: "image/png" });
-
-    let copied = false;
-    if (navigator.clipboard?.write && window.ClipboardItem) {
-      try {
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-        copied = true;
-      } catch (clipboardError) {
-        console.warn("Image clipboard unavailable", clipboardError);
-      }
-    }
-
-    if (!copied) downloadReportPng(file);
-    if (whatsappWindow) whatsappWindow.location.href = "https://web.whatsapp.com/";
-
-    if (copied) {
-      showToast(whatsappWindow
-        ? "Report copied. In WhatsApp press Ctrl+V (Cmd+V on Mac), then Send."
-        : "Report copied. Open WhatsApp Web and paste it with Ctrl+V (Cmd+V on Mac).");
-    } else {
-      showToast("Report image downloaded. Attach it in WhatsApp.");
-    }
+    pendingReportImageShare = { blob, file, key: shareKey };
+    const button = getReportImageShareButton();
+    if (button) button.textContent = "Copy & Open WhatsApp";
+    showToast("Image ready. Click Copy & Open WhatsApp.");
   } catch (error) {
     console.error(error);
-    if (whatsappWindow) whatsappWindow.close();
+    clearPendingReportImageShare();
     showToast(error.message || "Report image failed");
   } finally {
     surface?.remove();

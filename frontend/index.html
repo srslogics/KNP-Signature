@@ -114,18 +114,18 @@
 
 <!-- Scripts (order matters) -->
 <script src="js/api.js?v=20260803-1"></script>
-<script src="js/app.js?v=20260812-1"></script>
+<script src="js/app.js?v=20260812-2"></script>
 <script src="js/upload.js?v=20260803-1"></script>
 <script src="js/dashboard.js?v=20260803-1"></script>
 <script src="js/ledger.js?v=20260803-1"></script>
 <script src="js/analytics.js?v=20260803-1"></script>
 <script src="js/retail.js?v=20260803-1"></script>
 <script src="js/daily-sheet.js?v=20260803-1"></script>
-<script src="js/reports.js?v=20260812-1"></script>
+<script src="js/reports.js?v=20260812-2"></script>
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=20260812-1").catch(err => {
+      navigator.serviceWorker.register("./sw.js?v=20260812-2").catch(err => {
         console.warn("Service worker registration failed", err);
       });
     });
