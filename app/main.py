@@ -1412,6 +1412,15 @@ def upload_result(inserted, skipped, errors, extra=None):
 
 
 def report_response(rows, columns, filename, file_format, title, meta_rows=None):
+    if file_format == "json":
+        return {
+            "title": title,
+            "filename": filename,
+            "columns": columns,
+            "rows": rows,
+            "meta_rows": meta_rows or []
+        }
+
     if file_format == "excel":
         output = BytesIO()
         workbook = Workbook()

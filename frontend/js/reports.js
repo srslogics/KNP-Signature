@@ -41,23 +41,23 @@ function toggleReportFields() {
   reportDate.style.display = usesSingleDate ? "inline-flex" : "none";
 }
 
-async function downloadReport(format) {
+function buildReportRequest(format) {
   const reportType = document.getElementById("reportType")?.value;
   const party = document.getElementById("reportParty")?.value.trim();
   const startDate = document.getElementById("reportStartDate")?.value;
   const endDate = document.getElementById("reportEndDate")?.value;
   const reportDate = document.getElementById("reportDate")?.value;
 
-  if (!reportType) return;
+  if (!reportType) return null;
 
   if (reportType === "ledger" && !party) {
     showToast("Enter party name");
-    return;
+    return null;
   }
 
   if (reportType !== "inventory" && startDate && endDate && startDate > endDate) {
     showToast("Start date cannot be after end date");
-    return;
+    return null;
   }
 
   const params = new URLSearchParams({
@@ -73,13 +73,26 @@ async function downloadReport(format) {
     if (endDate) params.set("end_date", endDate);
   }
 
+  return { reportType, params, startDate, endDate, reportDate };
+}
+
+function buildReportHeaders() {
+  const headers = {};
+  const authToken = typeof getAuthToken === "function" ? getAuthToken() : "";
+  const selectedOutletId = typeof getSelectedOutletId === "function" ? getSelectedOutletId() : "";
+  if (authToken) headers["X-Auth-Token"] = authToken;
+  if (selectedOutletId) headers["X-Outlet-Id"] = selectedOutletId;
+  return headers;
+}
+
+async function downloadReport(format) {
+  const request = buildReportRequest(format);
+  if (!request) return;
+  const { reportType, params } = request;
+
   try {
     toggleButtons(true);
-    const headers = {};
-    const authToken = typeof getAuthToken === "function" ? getAuthToken() : "";
-    if (authToken) {
-      headers["X-Auth-Token"] = authToken;
-    }
+    const headers = buildReportHeaders();
 
     const response = await withLoading("Preparing report...", () => (
       fetchWithRetry(
@@ -122,6 +135,192 @@ async function downloadReport(format) {
     console.error(e);
     showToast("Report download failed");
   } finally {
+    toggleButtons(false);
+  }
+}
+
+function escapeReportImageHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function formatReportImageDate(value) {
+  if (!value) return "";
+  const [year, month, day] = String(value).split("-");
+  return year && month && day ? `${day}/${month}/${year}` : String(value);
+}
+
+function getReportImagePeriodLine(request) {
+  if (request.reportType === "inventory") {
+    return request.reportDate ? `Date: ${formatReportImageDate(request.reportDate)}` : "";
+  }
+  if (request.startDate && request.endDate) {
+    return `Period: ${formatReportImageDate(request.startDate)} to ${formatReportImageDate(request.endDate)}`;
+  }
+  if (request.startDate) return `Period: From ${formatReportImageDate(request.startDate)}`;
+  if (request.endDate) return `Period: Up to ${formatReportImageDate(request.endDate)}`;
+  return "Period: All Dates";
+}
+
+function formatReportImageValue(column, value) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value !== "number") return String(value);
+
+  const moneyColumns = new Set([
+    "Amount", "Balance", "Rate", "Sales", "Purchase", "Profit",
+    "Payment Received", "Payment Paid", "Opening", "Receivable",
+    "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total"
+  ]);
+  const wholeColumns = new Set(["NAG", "Nag"]);
+  const weightColumns = new Set([
+    "KGS", "Kg", "Weight", "Opening Kg", "Purchase Kg", "Sales Kg",
+    "Expected Kg", "Actual Kg", "Leakage Kg"
+  ]);
+  const maximumFractionDigits = wholeColumns.has(column) ? 0 : (weightColumns.has(column) ? 3 : 2);
+  const formatted = new Intl.NumberFormat("en-IN", {
+    minimumFractionDigits: moneyColumns.has(column) ? 2 : 0,
+    maximumFractionDigits
+  }).format(value);
+  return moneyColumns.has(column) ? `Rs ${formatted}` : formatted;
+}
+
+function buildReportImageSurface(report) {
+  const columns = Array.isArray(report.columns) ? report.columns : [];
+  const rows = Array.isArray(report.rows) ? report.rows : [];
+  const host = document.createElement("div");
+  const width = Math.min(1800, Math.max(920, columns.length * 145));
+  host.style.cssText = `position:fixed;left:-20000px;top:0;width:${width}px;padding:28px;background:#fff;color:#221b16;font-family:Inter,Arial,sans-serif;z-index:-1;box-sizing:border-box;`;
+
+  const meta = (report.meta_rows || [])
+    .map(line => `<div style="font-size:15px;font-weight:700;margin:4px 0;color:#58493d;">${escapeReportImageHtml(line)}</div>`)
+    .join("");
+  const header = columns
+    .map(column => `<th style="padding:10px 9px;border:1px solid #d8cbb9;background:#eee7dc;text-align:left;font-size:13px;white-space:nowrap;">${escapeReportImageHtml(column)}</th>`)
+    .join("");
+  const body = rows.map((row, rowIndex) => {
+    const label = String(row?.Type ?? row?.[columns[0]] ?? "").trim().toLowerCase();
+    const isTotal = label === "total" || label === "closing balance";
+    const background = isTotal ? "#f3e2be" : (rowIndex % 2 ? "#fcfaf6" : "#ffffff");
+    const cells = columns.map(column => {
+      const rawValue = row?.[column];
+      const align = typeof rawValue === "number" ? "right" : "left";
+      return `<td style="padding:9px;border:1px solid #ded4c6;text-align:${align};font-size:13px;font-weight:${isTotal ? 800 : 600};white-space:nowrap;">${escapeReportImageHtml(formatReportImageValue(column, rawValue))}</td>`;
+    }).join("");
+    return `<tr style="background:${background};">${cells}</tr>`;
+  }).join("");
+
+  host.innerHTML = `
+    <div style="padding-bottom:16px;border-bottom:2px solid #b98a51;">
+      <div style="font-size:25px;font-weight:800;">${escapeReportImageHtml(report.title || "Report")}</div>
+      ${meta}
+    </div>
+    <table style="width:100%;margin-top:16px;border-collapse:collapse;table-layout:auto;">
+      <thead><tr>${header}</tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    <div style="margin-top:14px;text-align:right;font-size:12px;color:#75685d;">KNP Signature</div>
+  `;
+  document.body.appendChild(host);
+  return host;
+}
+
+function downloadReportPng(file) {
+  const url = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = file.name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+async function shareReportImage() {
+  const request = buildReportRequest("json");
+  if (!request) return;
+
+  const whatsappWindow = window.open("about:blank", "_blank");
+  if (whatsappWindow) {
+    whatsappWindow.document.title = "Preparing report";
+    whatsappWindow.document.body.innerHTML = "<p style='font-family:Arial;padding:24px'>Preparing report image...</p>";
+  }
+
+  let surface = null;
+  try {
+    toggleButtons(true);
+    const headers = buildReportHeaders();
+
+    const response = await withLoading("Preparing image...", () => (
+      fetchWithRetry(`${BASE_URL}/reports/export?${request.params.toString()}`, { headers })
+    ));
+    if (response.status === 401) {
+      if (typeof clearAuthState === "function") clearAuthState();
+      throw new Error("Please log in again");
+    }
+    if (!response.ok) throw new Error(`Report failed: ${response.status}`);
+
+    const report = await response.json();
+    if (report.error) throw new Error(report.error);
+    if (!Array.isArray(report.rows) || !report.rows.length) {
+      throw new Error("No report data is available for this selection");
+    }
+    if (report.rows.length > 120) {
+      throw new Error("Select a shorter date range (maximum 120 rows) for a readable WhatsApp image");
+    }
+    if (!window.html2canvas) throw new Error("Image capture is unavailable");
+
+    const periodLine = getReportImagePeriodLine(request);
+    const reportMeta = Array.isArray(report.meta_rows) ? report.meta_rows : [];
+    if (periodLine && !reportMeta.some(line => String(line).toLowerCase().startsWith("period:"))) {
+      report.meta_rows = [periodLine, ...reportMeta];
+    }
+
+    surface = buildReportImageSurface(report);
+    const canvas = await window.html2canvas(surface, {
+      backgroundColor: "#ffffff",
+      scale: 1.5,
+      useCORS: true,
+      logging: false
+    });
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("Report image could not be created");
+
+    const safeName = String(report.filename || request.reportType || "report")
+      .replace(/[^a-z0-9_-]+/gi, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase();
+    const file = new File([blob], `${safeName || "report"}.png`, { type: "image/png" });
+
+    let copied = false;
+    if (navigator.clipboard?.write && window.ClipboardItem) {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        copied = true;
+      } catch (clipboardError) {
+        console.warn("Image clipboard unavailable", clipboardError);
+      }
+    }
+
+    if (!copied) downloadReportPng(file);
+    if (whatsappWindow) whatsappWindow.location.href = "https://web.whatsapp.com/";
+
+    if (copied) {
+      showToast(whatsappWindow
+        ? "Report copied. In WhatsApp press Ctrl+V (Cmd+V on Mac), then Send."
+        : "Report copied. Open WhatsApp Web and paste it with Ctrl+V (Cmd+V on Mac).");
+    } else {
+      showToast("Report image downloaded. Attach it in WhatsApp.");
+    }
+  } catch (error) {
+    console.error(error);
+    if (whatsappWindow) whatsappWindow.close();
+    showToast(error.message || "Report image failed");
+  } finally {
+    surface?.remove();
     toggleButtons(false);
   }
 }
