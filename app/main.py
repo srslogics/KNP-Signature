@@ -1078,6 +1078,8 @@ def summarize_ledger_transactions(txns, settled_keys=None):
             total_amount = sum(Decimal(g.amount or 0) for g in grouped)
             total_weight = sum(Decimal(g.weight or 0) for g in grouped)
             total_quantity = sum(Decimal(g.quantity or 0) for g in grouped)
+            rate_base = total_weight if total_weight > 0 else total_quantity
+            effective_rate = total_amount / rate_base if rate_base > 0 else Decimal("0")
             bill_key = (first.date, first.party_id, str(first.bill_number or "").strip())
             delta = Decimal("0") if bill_key in settled_keys else total_amount
 
@@ -1091,7 +1093,8 @@ def summarize_ledger_transactions(txns, settled_keys=None):
                 "amount": total_amount,
                 "delta": delta,
                 "weight": total_weight,
-                "quantity": total_quantity
+                "quantity": total_quantity,
+                "rate": effective_rate
             })
             continue
 
