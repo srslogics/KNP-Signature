@@ -12,6 +12,7 @@ const RETAIL_PAYMENT_QR_VIEW = {
 };
 
 const RETAIL_PENDING_STORAGE_KEY = "stockpilot.retail.pending";
+const RETAIL_BILL_HISTORY_PAGE_SIZE = 30;
 const LOCAL_PRINT_BRIDGE_URL = localStorage.getItem("stockpilot.printBridgeUrl") || "http://127.0.0.1:9876";
 
 let retailItemSuggestTimer = null;
@@ -38,6 +39,12 @@ let retailShortcutsCache = [];
 let retailShortcutsLoaded = false;
 let retailShortcutsPromise = null;
 let retailShortcutsOutletId = "";
+let retailBillHistoryServerBills = [];
+let retailBillHistoryDate = "";
+let retailBillHistoryLoaded = false;
+let retailBillHistoryHasMore = false;
+let retailBillHistoryNextOffset = 0;
+let retailBillHistoryRequestId = 0;
 const retailPartyBalanceByMode = {
   regular: 0,
   dressed: 0
@@ -258,13 +265,15 @@ async function initRetailPage() {
   retailPageBootstrapped = false;
   paymentReceiptHistoryLoaded = false;
   dressedStockLoadedForDate = "";
+  resetRetailBillHistoryState();
   const regularDate = retailField("regular", "date");
   if (!regularDate) return;
 
   regularDate.value = formatDateInput(new Date());
   regularDate.addEventListener("change", async () => {
+    resetRetailBillHistoryState();
     await refreshRetailBillNumber();
-    await loadRetailBills();
+    await loadRetailBills(true);
     if (retailBillingMode === "dressed") {
       await ensureDressedStockLoaded();
     }
@@ -339,7 +348,7 @@ async function initRetailPage() {
   renderShortcutManagerList();
   renderRetailOfflineBanner();
   syncRetailSettlementUi();
-  setRetailBillingMode("regular");
+  setRetailBillingMode("regular", { loadHistory: false });
   refreshRetailBillNumber();
   scheduleRetailPreviewRender();
   loadRetailBills();
@@ -368,7 +377,8 @@ async function initRetailSetupPage() {
   ensureRetailPartyDirectoryLoaded();
 }
 
-function setRetailBillingMode(mode) {
+function setRetailBillingMode(mode, options = {}) {
+  const { loadHistory = true } = options;
   retailBillingMode = mode === "dressed" ? "dressed" : mode === "payment" ? "payment" : "regular";
   const onSetupPage = isRetailSetupPage();
   const regularButton = document.getElementById("retailModeRegular");
@@ -458,7 +468,13 @@ function setRetailBillingMode(mode) {
       }
     }
     scheduleRetailPreviewRender();
-    loadRetailBills();
+    if (loadHistory) {
+      if (retailBillHistoryLoaded && retailBillHistoryDate === getActiveRetailDate()) {
+        renderRetailBillHistory();
+      } else {
+        loadRetailBills();
+      }
+    }
   }
 }
 
@@ -1493,7 +1509,10 @@ function populateRetailFormFromBill(bill) {
   currentRetailBill = bill;
   retailDraftDirty = false;
   retailBillCompleted = true;
-  setRetailBillingMode(isCombinedRetailBillingPage() ? "regular" : (billMode === "both" ? "regular" : billMode));
+  setRetailBillingMode(
+    isCombinedRetailBillingPage() ? "regular" : (billMode === "both" ? "regular" : billMode),
+    { loadHistory: false }
+  );
   renderRetailPreview(currentRetailBill);
 }
 
@@ -1579,7 +1598,7 @@ async function saveRetailBill(options = {}) {
     if (typeof clearOperationalCaches === "function") {
       clearOperationalCaches();
     }
-    await loadRetailBills(true);
+    rememberRetailBillInHistory(currentRetailBill);
     if (retailBillingMode === "dressed") {
       await loadDressedStock(true);
     }
@@ -1602,7 +1621,7 @@ async function saveRetailBill(options = {}) {
       if (typeof clearOperationalCaches === "function") {
         clearOperationalCaches();
       }
-      await loadRetailBills(true);
+      renderRetailBillHistory();
       showToast(`Saved offline. Bill ${offlineBill.bill_number} will sync later.`);
       return offlineBill;
     }
@@ -1746,57 +1765,142 @@ async function openPaymentReceipt(receiptId) {
   }
 }
 
-async function loadRetailBills(force = false) {
+function resetRetailBillHistoryState() {
+  retailBillHistoryRequestId += 1;
+  retailBillHistoryServerBills = [];
+  retailBillHistoryDate = "";
+  retailBillHistoryLoaded = false;
+  retailBillHistoryHasMore = false;
+  retailBillHistoryNextOffset = 0;
+  const loadMoreButton = document.getElementById("retailBillsLoadMore");
+  if (loadMoreButton) loadMoreButton.style.display = "none";
+}
+
+function renderRetailBillHistory() {
   const date = getActiveRetailDate();
   const body = document.getElementById("retailBillsBody");
   if (!body) return;
 
-  body.innerHTML = `<tr><td colspan="8" class="empty">Loading retail bills...</td></tr>`;
+  const pendingBills = getPendingRetailBills().filter(bill => !date || bill.date === date);
+  const mergedResults = mergeRetailBillResults(retailBillHistoryServerBills, pendingBills);
+  const visibleResults = isCombinedRetailBillingPage()
+    ? mergedResults
+    : mergedResults.filter(bill => normalizeRetailBillMode(bill) === retailBillingMode);
+  const loadMoreButton = document.getElementById("retailBillsLoadMore");
+
+  if (loadMoreButton) {
+    loadMoreButton.style.display = retailBillHistoryHasMore ? "" : "none";
+    loadMoreButton.disabled = false;
+    loadMoreButton.textContent = "Load More";
+  }
+
+  if (!visibleResults.length) {
+    body.innerHTML = `<tr><td colspan="8" class="empty">No ${isCombinedRetailBillingPage() ? "retail" : (retailBillingMode === "dressed" ? "dressed" : "regular")} bills for this date</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = visibleResults.map(bill => `
+    <tr>
+      <td>${escapeHtml(bill.bill_number)}</td>
+      <td>${formatDisplayDate(bill.date)}</td>
+      <td>${escapeHtml(bill.customer_name || "Walk-in Customer")}</td>
+      <td>${escapeHtml(formatRetailBillMode(bill))}</td>
+      <td>${formatBillMoney(bill.total_amount)}</td>
+      <td>${formatBillMoney(bill.paid_amount)}</td>
+      <td>${formatBillMoney(bill.outstanding_amount)}</td>
+      <td><button type="button" onclick="openRetailBill('${bill.id}')">Open</button></td>
+    </tr>
+  `).join("");
+}
+
+function rememberRetailBillInHistory(bill) {
+  const date = getActiveRetailDate();
+  if (!bill || !date || String(bill.date || "") !== String(date)) return;
+
+  if (!retailBillHistoryLoaded || retailBillHistoryDate !== date) {
+    retailBillHistoryServerBills = [bill];
+    retailBillHistoryDate = date;
+    retailBillHistoryLoaded = true;
+    retailBillHistoryHasMore = false;
+    retailBillHistoryNextOffset = 1;
+    renderRetailBillHistory();
+    return;
+  }
+
+  const existingIndex = retailBillHistoryServerBills.findIndex(existing => existing.id === bill.id);
+  if (existingIndex >= 0) {
+    retailBillHistoryServerBills[existingIndex] = bill;
+  } else {
+    const loadedCount = Math.max(retailBillHistoryServerBills.length, 1);
+    const targetCount = loadedCount < RETAIL_BILL_HISTORY_PAGE_SIZE ? loadedCount + 1 : loadedCount;
+    retailBillHistoryServerBills = [bill, ...retailBillHistoryServerBills].slice(0, targetCount);
+    retailBillHistoryNextOffset = targetCount;
+    if (loadedCount >= RETAIL_BILL_HISTORY_PAGE_SIZE) retailBillHistoryHasMore = true;
+  }
+  renderRetailBillHistory();
+}
+
+async function loadRetailBills(force = false, append = false) {
+  const date = getActiveRetailDate();
+  const body = document.getElementById("retailBillsBody");
+  if (!body) return;
+
+  const shouldAppend = append && retailBillHistoryLoaded && retailBillHistoryDate === date;
+  const offset = shouldAppend ? retailBillHistoryNextOffset : 0;
+  const requestId = ++retailBillHistoryRequestId;
+  const loadMoreButton = document.getElementById("retailBillsLoadMore");
+
+  if (shouldAppend) {
+    if (loadMoreButton) {
+      loadMoreButton.disabled = true;
+      loadMoreButton.textContent = "Loading...";
+    }
+  } else {
+    body.innerHTML = `<tr><td colspan="8" class="empty">Loading retail bills...</td></tr>`;
+  }
 
   try {
     const params = new URLSearchParams();
     if (date) params.set("date", date);
+    params.set("limit", String(RETAIL_BILL_HISTORY_PAGE_SIZE));
+    params.set("offset", String(offset));
     const query = params.toString();
-    const pendingBills = getPendingRetailBills().filter(bill => !date || bill.date === date);
     const data = navigator.onLine
       ? await optionalApiCall(
           `/retail-bills${query ? `?${query}` : ""}`,
-          { results: [] },
+          { results: [], has_more: false, next_offset: offset },
           "GET",
           null,
           { cache: !force }
         )
-      : { results: [] };
+      : { results: [], has_more: false, next_offset: offset };
 
-    const mergedResults = mergeRetailBillResults(data.results || [], pendingBills);
-    const visibleResults = isCombinedRetailBillingPage()
-      ? mergedResults
-      : mergedResults.filter(bill => normalizeRetailBillMode(bill) === retailBillingMode);
+    if (requestId !== retailBillHistoryRequestId) return;
 
-    if (!visibleResults.length) {
-      body.innerHTML = `<tr><td colspan="8" class="empty">No ${isCombinedRetailBillingPage() ? "retail" : (retailBillingMode === "dressed" ? "dressed" : "regular")} bills for this date</td></tr>`;
-      return;
-    }
-
-    body.innerHTML = "";
-    visibleResults.forEach(bill => {
-      const row = document.createElement("tr");
-      row.innerHTML = `
-        <td>${escapeHtml(bill.bill_number)}</td>
-        <td>${formatDisplayDate(bill.date)}</td>
-        <td>${escapeHtml(bill.customer_name || "Walk-in Customer")}</td>
-        <td>${escapeHtml(formatRetailBillMode(bill))}</td>
-        <td>${formatBillMoney(bill.total_amount)}</td>
-        <td>${formatBillMoney(bill.paid_amount)}</td>
-        <td>${formatBillMoney(bill.outstanding_amount)}</td>
-        <td><button type="button" onclick="openRetailBill('${bill.id}')">Open</button></td>
-      `;
-      body.appendChild(row);
-    });
+    const pageResults = Array.isArray(data.results) ? data.results : [];
+    retailBillHistoryServerBills = shouldAppend
+      ? mergeRetailBillResults(retailBillHistoryServerBills, pageResults)
+      : pageResults;
+    retailBillHistoryDate = date;
+    retailBillHistoryLoaded = true;
+    retailBillHistoryHasMore = Boolean(data.has_more);
+    retailBillHistoryNextOffset = Number(data.next_offset ?? (offset + pageResults.length));
+    renderRetailBillHistory();
   } catch (e) {
     console.error(e);
-    body.innerHTML = `<tr><td colspan="8" class="empty">Retail bills failed to load</td></tr>`;
+    if (requestId !== retailBillHistoryRequestId) return;
+    if (shouldAppend) {
+      showToast("Older retail bills failed to load");
+      renderRetailBillHistory();
+    } else {
+      body.innerHTML = `<tr><td colspan="8" class="empty">Retail bills failed to load</td></tr>`;
+    }
   }
+}
+
+async function loadMoreRetailBills() {
+  if (!retailBillHistoryHasMore) return;
+  await loadRetailBills(true, true);
 }
 
 function addDressedStockRow(entry = null) {
@@ -1945,7 +2049,7 @@ function startNextRetailBill() {
   resetRetailForm();
 
   retailField("regular", "date").value = nextDate;
-  setRetailBillingMode(nextMode);
+  setRetailBillingMode(nextMode, { loadHistory: false });
   refreshRetailBillNumber(nextMode);
   scheduleRetailPreviewRender();
 }
@@ -2901,7 +3005,13 @@ function computeNextRetailBillNumber(date, baseline = "1") {
 }
 
 function mergeRetailBillResults(serverBills, pendingBills) {
-  const merged = [...pendingBills, ...serverBills];
+  const seen = new Set();
+  const merged = [...pendingBills, ...serverBills].filter(bill => {
+    const key = String(bill?.id || `${bill?.date || ""}|${bill?.bill_number || ""}|${bill?.local_only ? "local" : "server"}`);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   return merged.sort((a, b) => {
     if ((a.date || "") !== (b.date || "")) return (b.date || "").localeCompare(a.date || "");
     return Number(String(b.bill_number || "").replace(/\D/g, "")) - Number(String(a.bill_number || "").replace(/\D/g, ""));
@@ -3021,7 +3131,12 @@ function retailBillsMatchByFingerprint(localBill, remoteBill) {
 
 async function findMatchingRemoteRetailBill(pendingBill) {
   if (!pendingBill?.date || !pendingBill?.bill_number) return null;
-  const response = await apiCall(`/retail-bills?date=${encodeURIComponent(pendingBill.date)}`, "GET", null, {}, { loader: false });
+  const params = new URLSearchParams({
+    date: String(pendingBill.date),
+    bill_number: String(pendingBill.bill_number),
+    limit: "5"
+  });
+  const response = await apiCall(`/retail-bills?${params.toString()}`, "GET", null, {}, { loader: false });
   const results = Array.isArray(response?.results) ? response.results : [];
   const candidates = results.filter(serverBill =>
     String(serverBill?.date || "") === String(pendingBill.date || "")

@@ -1171,7 +1171,8 @@ function loadPage(page) {
           <details class="section collapsible-section" id="retailBillHistorySection">
             <summary class="section-summary">Recent Retail Bills</summary>
             <div class="section-head compact-section-head">
-              <button type="button" onclick="loadRetailBills()">Refresh</button>
+              <button type="button" id="retailBillsLoadMore" onclick="loadMoreRetailBills()" style="display:none">Load More</button>
+              <button type="button" onclick="loadRetailBills(true)">Refresh</button>
             </div>
 
             <div class="card table-card">

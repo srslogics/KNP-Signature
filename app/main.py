@@ -39,30 +39,32 @@ def safe_create_index(conn, sql: str):
 
 
 def current_shared_document_number(target_date, db: Session, outlet_id) -> str:
-    bill_numbers = db.query(models.RetailBill.bill_number).filter(
-        models.RetailBill.date == target_date,
-        models.RetailBill.outlet_id == outlet_id
-    ).all()
-    receipt_numbers = db.query(models.PaymentReceipt.receipt_number).filter(
-        models.PaymentReceipt.date == target_date,
-        models.PaymentReceipt.outlet_id == outlet_id
-    ).all()
-
-    max_number = 0
-    for row in list(bill_numbers) + list(receipt_numbers):
-        raw_value = getattr(row, "bill_number", None) or getattr(row, "receipt_number", None)
-        digits = "".join(char for char in str(raw_value or "") if char.isdigit())
-        if digits:
-            max_number = max(max_number, int(digits))
-
-    counter_row = db.query(models.DocumentNumberCounter).filter(
-        models.DocumentNumberCounter.target_date == target_date,
-        models.DocumentNumberCounter.outlet_id == outlet_id
-    ).first()
-    if counter_row and counter_row.next_number:
-        max_number = max(max_number, int(counter_row.next_number) - 1)
-
-    return str(max_number + 1)
+    next_number = db.execute(
+        text("""
+            SELECT GREATEST(
+                COALESCE((
+                    SELECT MAX(CAST(NULLIF(regexp_replace(COALESCE(bill_number, ''), '[^0-9]', '', 'g'), '') AS INTEGER))
+                    FROM retail_bills
+                    WHERE date = :target_date AND outlet_id = :outlet_id
+                ), 0),
+                COALESCE((
+                    SELECT MAX(CAST(NULLIF(regexp_replace(COALESCE(receipt_number, ''), '[^0-9]', '', 'g'), '') AS INTEGER))
+                    FROM payment_receipts
+                    WHERE date = :target_date AND outlet_id = :outlet_id
+                ), 0),
+                COALESCE((
+                    SELECT next_number - 1
+                    FROM document_number_counters
+                    WHERE target_date = :target_date AND outlet_id = :outlet_id
+                ), 0)
+            ) + 1
+        """),
+        {
+            "target_date": target_date,
+            "outlet_id": str(outlet_id),
+        }
+    ).scalar_one()
+    return str(next_number)
 
 
 def reserve_shared_document_number(target_date, db: Session, outlet_id) -> str:
@@ -1258,6 +1260,37 @@ def ledger_delta(txn):
     return Decimal("0")
 
 
+def ledger_balance_case():
+    settled_retail_sale = (
+        func.upper(func.coalesce(models.Transaction.category, "")).in_(["RETAIL", "RETAIL DRESSED"])
+        & models.Transaction.party_id.isnot(None)
+        & exists().where(
+            and_(
+                models.RetailBill.party_id == models.Transaction.party_id,
+                models.RetailBill.outlet_id == models.Transaction.outlet_id,
+                models.RetailBill.date == models.Transaction.date,
+                cast(models.RetailBill.bill_number, String) == cast(models.Transaction.bill_number, String),
+                models.RetailBill.outstanding_amount <= 0
+            )
+        )
+    )
+    return case(
+        (
+            (models.Transaction.type == "SALE") & ~settled_retail_sale,
+            models.Transaction.amount
+        ),
+        (
+            models.Transaction.type.in_(["PURCHASE", "OPENING"]),
+            models.Transaction.amount
+        ),
+        (
+            models.Transaction.type == "PAYMENT",
+            -models.Transaction.amount
+        ),
+        else_=0
+    )
+
+
 def receivable_delta(txn, settled_keys=None):
     amount = Decimal(txn.amount or 0)
     settled_keys = settled_keys or set()
@@ -2160,11 +2193,9 @@ def retail_party_balance_after(db: Session, party_id, outlet_id=None):
     )
     if outlet_id:
         txns_query = txns_query.filter(models.Transaction.outlet_id == outlet_id)
-    txns = txns_query.order_by(
-        models.Transaction.date.asc(),
-        models.Transaction.created_at.asc()
-    ).all()
-    balance_after, _ = build_ledger(db, txns)
+    balance_after = txns_query.with_entities(
+        func.coalesce(func.sum(ledger_balance_case()), 0)
+    ).scalar()
     return float(balance_after or 0)
 
 
@@ -5018,7 +5049,16 @@ def next_retail_bill_number(date: str, db: Session = Depends(get_db), current_ou
 
 
 @app.get("/retail-bills")
-def list_retail_bills(date: str = None, db: Session = Depends(get_db), current_outlet: models.Outlet = Depends(get_current_outlet)):
+def list_retail_bills(
+    date: str = None,
+    bill_number: str = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_outlet: models.Outlet = Depends(get_current_outlet)
+):
+    page_limit = min(max(int(limit or 50), 1), 100)
+    page_offset = max(int(offset or 0), 0)
     query = db.query(models.RetailBill).order_by(
         models.RetailBill.date.desc(),
         models.RetailBill.created_at.desc()
@@ -5029,9 +5069,13 @@ def list_retail_bills(date: str = None, db: Session = Depends(get_db), current_o
         if not target_date:
             return {"error": "Invalid date format"}
         query = query.filter(models.RetailBill.date == target_date)
-        bills = query.all()
-    else:
-        bills = query.limit(50).all()
+
+    if bill_number:
+        query = query.filter(models.RetailBill.bill_number == str(bill_number).strip())
+
+    page = query.offset(page_offset).limit(page_limit + 1).all()
+    has_more = len(page) > page_limit
+    bills = page[:page_limit]
     bill_ids = [bill.id for bill in bills]
     mode_map = {}
     if bill_ids:
@@ -5063,7 +5107,9 @@ def list_retail_bills(date: str = None, db: Session = Depends(get_db), current_o
                 "outstanding_amount": float(bill.outstanding_amount or 0)
             }
             for bill in bills
-        ]
+        ],
+        "has_more": has_more,
+        "next_offset": page_offset + len(bills)
     }
 
 
