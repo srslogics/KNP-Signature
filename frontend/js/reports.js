@@ -5,10 +5,16 @@ function getReportImageShareButton() {
   return document.getElementById("shareReportImageButton");
 }
 
+function setReportImageShareButtonLabel(label, icon = "share-2") {
+  const button = getReportImageShareButton();
+  if (!button) return;
+  button.innerHTML = `<i data-lucide="${icon}"></i><span>${label}</span>`;
+  if (typeof refreshIcons === "function") refreshIcons();
+}
+
 function clearPendingReportImageShare() {
   pendingReportImageShare = null;
-  const button = getReportImageShareButton();
-  if (button) button.textContent = "Share Image";
+  setReportImageShareButtonLabel("Share Image");
 }
 
 function getReportImageShareKey(request) {
@@ -50,12 +56,16 @@ function toggleReportFields() {
   const needsParty = reportType === "ledger";
   const allowsParty = reportType === "transactions";
   const usesSingleDate = reportType === "inventory";
+  const partyField = partyInput.closest(".form-field") || partyInput;
+  const startField = startDate.closest(".form-field") || startDate;
+  const endField = endDate.closest(".form-field") || endDate;
+  const reportDateField = reportDate.closest(".form-field") || reportDate;
 
-  partyInput.style.display = needsParty || allowsParty ? "inline-flex" : "none";
+  partyField.style.display = needsParty || allowsParty ? "flex" : "none";
   partyInput.placeholder = needsParty ? "Party name required" : "Party name optional";
-  startDate.style.display = usesSingleDate ? "none" : "inline-flex";
-  endDate.style.display = usesSingleDate ? "none" : "inline-flex";
-  reportDate.style.display = usesSingleDate ? "inline-flex" : "none";
+  startField.style.display = usesSingleDate ? "none" : "flex";
+  endField.style.display = usesSingleDate ? "none" : "flex";
+  reportDateField.style.display = usesSingleDate ? "flex" : "none";
 }
 
 function buildReportRequest(format) {
@@ -190,7 +200,8 @@ function formatReportImageValue(column, value) {
   const moneyColumns = new Set([
     "Amount", "Balance", "Rate", "Sales", "Purchase", "Profit",
     "Payment Received", "Payment Paid", "Opening", "Receivable",
-    "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total"
+    "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total",
+    "Debit", "Credit", "Account Balance", "Net"
   ]);
   const wholeColumns = new Set(["NAG", "Nag"]);
   const weightColumns = new Set([
@@ -356,8 +367,7 @@ async function shareReportImage() {
       .toLowerCase();
     const file = new File([blob], `${safeName || "report"}.png`, { type: "image/png" });
     pendingReportImageShare = { blob, file, key: shareKey };
-    const button = getReportImageShareButton();
-    if (button) button.textContent = "Copy & Open WhatsApp";
+    setReportImageShareButtonLabel("Copy & Open WhatsApp", "clipboard");
     showToast("Image ready. Click Copy & Open WhatsApp.");
   } catch (error) {
     console.error(error);

@@ -38,11 +38,15 @@ async function searchLedger() {
 
     const body = document.getElementById("ledgerBody");
     const total = document.getElementById("totalBalance");
+    const receivable = document.getElementById("receivableBalance");
+    const payable = document.getElementById("payableBalance");
     const summary = document.getElementById("partySummary");
 
     // --- Loading state
-    body.innerHTML = `<tr><td colspan="11" class="empty">Loading...</td></tr>`;
+    body.innerHTML = `<tr><td colspan="9" class="empty">Loading...</td></tr>`;
     total.innerText = "₹ 0";
+    if (receivable) receivable.innerText = "₹ 0";
+    if (payable) payable.innerText = "₹ 0";
     if (summary) summary.innerHTML = "";
 
     try {
@@ -53,7 +57,7 @@ async function searchLedger() {
       const data = await apiCall(`/party/ledger?${params.toString()}`);
 
       if (data.error) {
-        body.innerHTML = `<tr><td colspan="11" class="empty"></td></tr>`;
+        body.innerHTML = `<tr><td colspan="9" class="empty"></td></tr>`;
         body.querySelector("td").innerText = data.error;
         showToast(data.error);
         return;
@@ -62,7 +66,7 @@ async function searchLedger() {
       // --- Multiple matches case
       if (data.multiple_matches) {
         const names = data.results.map(p => p.name).join(", ");
-        body.innerHTML = `<tr><td colspan="11" class="empty"></td></tr>`;
+        body.innerHTML = `<tr><td colspan="9" class="empty"></td></tr>`;
         body.querySelector("td").innerText = `Multiple matches found:\n${names}`;
         return;
       }
@@ -70,14 +74,18 @@ async function searchLedger() {
       // --- No data
       if (!data.ledger || data.ledger.length === 0) {
         const partyLabel = data.party_name || name;
-        body.innerHTML = `<tr><td colspan="11" class="empty">${partyLabel} found, but opening balance is 0 and no transactions are recorded yet</td></tr>`;
+        body.innerHTML = `<tr><td colspan="9" class="empty">${partyLabel} has no transactions in the selected period</td></tr>`;
         total.innerText = formatMoney(data.total_balance || 0);
+        if (receivable) receivable.innerText = formatMoney(data.balances?.receivable || 0);
+        if (payable) payable.innerText = formatMoney(data.balances?.payable || 0);
         renderPartySummary(data.summary ? { summary: data.summary } : null);
         return;
       }
 
       // --- Total balance
       total.innerText = formatMoney(data.total_balance);
+      if (receivable) receivable.innerText = formatMoney(data.balances?.receivable || 0);
+      if (payable) payable.innerText = formatMoney(data.balances?.payable || 0);
       renderPartySummary(data.summary ? { summary: data.summary } : null);
 
       // --- Populate table
@@ -85,27 +93,31 @@ async function searchLedger() {
 
       data.ledger.forEach(row => {
         const tr = document.createElement("tr");
+        const detailParts = [
+          row.category,
+          row.item,
+          Number(row.quantity || 0) ? `${formatLedgerNumber(row.quantity)} NAG` : "",
+          Number(row.weight || 0) ? `${formatLedgerNumber(row.weight)} kg` : "",
+          Number(row.rate || 0) ? `${formatMoney(row.rate)}/kg` : "",
+          row.payment_mode && row.payment_mode !== "NA" ? row.payment_mode : ""
+        ].filter(Boolean);
 
-        const typeClass = Number(row.delta || 0) < 0 ? "credit" : "debit";
-
-        appendCell(tr, row.date);
+        appendCell(tr, formatLedgerDate(row.date));
+        appendCell(tr, formatLedgerAccount(row.account));
         appendCell(tr, row.type);
         appendCell(tr, row.bill_number || "-");
-        appendCell(tr, row.category || "-");
-        appendCell(tr, row.item || "-");
-        appendCell(tr, formatLedgerNumber(row.quantity));
-        appendCell(tr, formatLedgerNumber(row.weight));
-        appendCell(tr, formatLedgerNumber(row.rate));
-        appendCell(tr, row.payment_mode || "NA");
-        appendCell(tr, formatMoney(row.amount), typeClass);
-        appendCell(tr, formatMoney(row.balance));
+        appendCell(tr, detailParts.join(" · ") || "-");
+        appendCell(tr, row.debit ? formatMoney(row.debit) : "-", row.debit ? "debit" : "");
+        appendCell(tr, row.credit ? formatMoney(row.credit) : "-", row.credit ? "credit" : "");
+        appendCell(tr, formatMoney(row.account_balance));
+        appendCell(tr, formatMoney(row.net_balance));
 
         body.appendChild(tr);
       });
 
     } catch (e) {
       console.error(e);
-      body.innerHTML = `<tr><td colspan="11" class="empty">Error loading data</td></tr>`;
+      body.innerHTML = `<tr><td colspan="9" class="empty">Error loading data</td></tr>`;
       showToast("Ledger fetch failed");
     }
   }
@@ -164,6 +176,16 @@ async function searchLedger() {
     return num.toLocaleString(undefined, { maximumFractionDigits: 3 });
   }
 
+  function formatLedgerAccount(value) {
+    return String(value || "").toUpperCase() === "PAYABLE" ? "Payable" : "Receivable";
+  }
+
+  function formatLedgerDate(value) {
+    const parts = String(value || "").split("-");
+    if (parts.length !== 3) return value || "";
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+
   function appendCell(row, value, className = "") {
     const cell = document.createElement("td");
     cell.innerText = value ?? "";
@@ -176,12 +198,12 @@ async function searchLedger() {
     if (!summary || !detail || detail.error) return;
 
     const values = [
-      ["Opening", detail.summary.opening_balance],
+      ["Opening Receivable", detail.summary.opening_receivable],
+      ["Opening Payable", detail.summary.opening_payable],
       ["Sales", detail.summary.total_sales],
-      ["Purchase", detail.summary.total_purchase],
+      ["Purchases", detail.summary.total_purchase],
       ["Received", detail.summary.total_received],
-      ["Paid", detail.summary.total_paid],
-      ["Last Date", detail.summary.last_transaction_date || "-"]
+      ["Paid", detail.summary.total_paid]
     ];
 
     summary.innerHTML = "";

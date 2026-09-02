@@ -21,7 +21,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="css/style.css?v=20260803-1">
+  <link rel="stylesheet" href="css/style.css?v=20260902-2">
 
   <!-- Charts & icons -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -38,40 +38,38 @@
     <div class="brand">
       <div>
         <strong>KNP Signature</strong>
-        <span>Finance Console</span>
+        <span>Business Operations</span>
       </div>
+      <button type="button" class="mobile-menu-button" onclick="toggleSidebarMenu()" aria-label="Toggle navigation" aria-expanded="false" title="Menu">
+        <i data-lucide="menu"></i>
+      </button>
     </div>
 
     <nav class="menu" aria-label="Primary navigation">
       <div class="menu-group">
-        <span class="menu-label">Counter</span>
+        <span class="menu-label">Daily Work</span>
         <button type="button" id="menu-dashboard" onclick="loadPage('dashboard')"><i data-lucide="layout-dashboard"></i><span>Dashboard</span></button>
         <button type="button" id="menu-retail" onclick="loadPage('retail')"><i data-lucide="receipt-text"></i><span>Retail Billing</span></button>
-        <button type="button" id="menu-billing-setup" onclick="loadPage('billing-setup')"><i data-lucide="sliders-horizontal"></i><span>Billing Setup</span></button>
-      </div>
-
-      <div class="menu-group">
-        <span class="menu-label">Stock</span>
-        <button type="button" id="menu-upload" onclick="loadPage('upload')"><i data-lucide="upload-cloud"></i><span>Upload</span></button>
+        <button type="button" id="menu-upload" onclick="loadPage('upload')"><i data-lucide="list-plus"></i><span>Daily Entries</span></button>
         <button type="button" id="menu-daily-sheet" onclick="loadPage('daily-sheet')"><i data-lucide="sheet"></i><span>Daily Sheet</span></button>
       </div>
 
       <div class="menu-group">
         <span class="menu-label">Finance</span>
         <button type="button" id="menu-ledger" onclick="loadPage('ledger')"><i data-lucide="book-open-check"></i><span>Ledger</span></button>
-        <button type="button" id="menu-analytics" onclick="loadPage('analytics')"><i data-lucide="chart-no-axes-combined"></i><span>Analytics</span></button>
         <button type="button" id="menu-reports" onclick="loadPage('reports')"><i data-lucide="file-down"></i><span>Reports</span></button>
+        <button type="button" id="menu-analytics" onclick="loadPage('analytics')"><i data-lucide="chart-no-axes-combined"></i><span>Analytics</span></button>
       </div>
 
       <div class="menu-group menu-group-admin">
-        <span class="menu-label">Admin</span>
+        <span class="menu-label">Settings</span>
+        <button type="button" id="menu-billing-setup" onclick="loadPage('billing-setup')"><i data-lucide="sliders-horizontal"></i><span>Billing Setup</span></button>
         <button type="button" id="menu-access-control" onclick="loadPage('access-control')"><i data-lucide="shield-check"></i><span>Access Control</span></button>
       </div>
     </nav>
 
     <div class="sidebar-utility">
       <button type="button" id="installAppButton" class="button-secondary sidebar-install" onclick="promptInstallApp()" style="display:none;">Install App</button>
-      <span class="sidebar-footnote">Counter tools on top, setup tools below.</span>
     </div>
   </aside>
 
@@ -114,18 +112,18 @@
 
 <!-- Scripts (order matters) -->
 <script src="js/api.js?v=20260803-1"></script>
-<script src="js/app.js?v=20260901-1"></script>
-<script src="js/upload.js?v=20260803-1"></script>
-<script src="js/dashboard.js?v=20260803-1"></script>
-<script src="js/ledger.js?v=20260803-1"></script>
+<script src="js/app.js?v=20260902-2"></script>
+<script src="js/upload.js?v=20260902-2"></script>
+<script src="js/dashboard.js?v=20260902-2"></script>
+<script src="js/ledger.js?v=20260902-2"></script>
 <script src="js/analytics.js?v=20260803-1"></script>
-<script src="js/retail.js?v=20260901-1"></script>
+<script src="js/retail.js?v=20260902-2"></script>
 <script src="js/daily-sheet.js?v=20260803-1"></script>
-<script src="js/reports.js?v=20260812-2"></script>
+<script src="js/reports.js?v=20260902-2"></script>
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=20260901-1").catch(err => {
+      navigator.serviceWorker.register("./sw.js?v=20260902-2").catch(err => {
         console.warn("Service worker registration failed", err);
       });
     });

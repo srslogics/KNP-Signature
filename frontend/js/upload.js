@@ -401,17 +401,17 @@ function removeManualEntryRow(button) {
 
 function addDealerEntryRow() {
   createManualRow("dealerEntryRows", `
-    <div class="typeahead-field">
-      <input type="text" class="dealerParty" placeholder="Dealer name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
-      <div class="typeahead-box manual-party-suggest-box"></div>
-    </div>
-    <input type="text" class="dealerBillNo" placeholder="Bill no. (optional)">
-    <input type="text" class="dealerItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)">
-    <input type="number" class="dealerNag" placeholder="NAG" min="0" step="1">
-    <input type="number" class="dealerWeight" placeholder="Kgs" min="0" step="0.01">
-    <input type="number" class="dealerRate" placeholder="Rate/kg" min="0" step="0.01">
-    <input type="number" class="dealerTransportMortalityNag" placeholder="Transport NAG" min="0" step="1">
-    <input type="number" class="dealerTransportMortalityWeight" placeholder="Transport KG" min="0" step="0.01">
+    <div class="form-field"><span>Dealer</span><div class="typeahead-field">
+        <input type="text" class="dealerParty" placeholder="Dealer name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+        <div class="typeahead-box manual-party-suggest-box"></div>
+      </div></div>
+    <label class="form-field"><span>Bill no.</span><input type="text" class="dealerBillNo" placeholder="Optional"></label>
+    <label class="form-field"><span>Hen type</span><input type="text" class="dealerItem" placeholder="BB, CB..." list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)"></label>
+    <label class="form-field"><span>NAG</span><input type="number" class="dealerNag" placeholder="0" min="0" step="1"></label>
+    <label class="form-field"><span>Weight (kg)</span><input type="number" class="dealerWeight" placeholder="0" min="0" step="0.01"></label>
+    <label class="form-field"><span>Rate / kg</span><input type="number" class="dealerRate" placeholder="0" min="0" step="0.01"></label>
+    <label class="form-field"><span>Transport NAG</span><input type="number" class="dealerTransportMortalityNag" placeholder="0" min="0" step="1"></label>
+    <label class="form-field"><span>Transport kg</span><input type="number" class="dealerTransportMortalityWeight" placeholder="0" min="0" step="0.01"></label>
     <div class="manual-row-actions">
       <button type="button" class="button-secondary manual-whatsapp-button" onclick="sendDealerEntryOnWhatsApp(this)">Send on WhatsApp</button>
       <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
@@ -421,15 +421,15 @@ function addDealerEntryRow() {
 
 function addVendorEntryRow() {
   createManualRow("vendorEntryRows", `
-    <div class="typeahead-field">
-      <input type="text" class="vendorParty" placeholder="Vendor name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
-      <div class="typeahead-box manual-party-suggest-box"></div>
-    </div>
-    <input type="text" class="vendorCategory" placeholder="Category (optional)">
-    <input type="text" class="vendorItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)">
-    <input type="number" class="vendorNag" placeholder="NAG" min="0" step="1">
-    <input type="number" class="vendorWeight" placeholder="Kgs" min="0" step="0.01">
-    <input type="number" class="vendorRate" placeholder="Rate/kg" min="0" step="0.01">
+    <div class="form-field"><span>Vendor</span><div class="typeahead-field">
+        <input type="text" class="vendorParty" placeholder="Vendor name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+        <div class="typeahead-box manual-party-suggest-box"></div>
+      </div></div>
+    <label class="form-field"><span>Category</span><input type="text" class="vendorCategory" placeholder="Optional"></label>
+    <label class="form-field"><span>Hen type</span><input type="text" class="vendorItem" placeholder="BB, CB..." list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)"></label>
+    <label class="form-field"><span>NAG</span><input type="number" class="vendorNag" placeholder="0" min="0" step="1"></label>
+    <label class="form-field"><span>Weight (kg)</span><input type="number" class="vendorWeight" placeholder="0" min="0" step="0.01"></label>
+    <label class="form-field"><span>Rate / kg</span><input type="number" class="vendorRate" placeholder="0" min="0" step="0.01"></label>
     <div class="manual-row-actions">
       <button type="button" class="button-secondary manual-whatsapp-button" onclick="sendVendorEntryOnWhatsApp(this)">Send on WhatsApp</button>
       <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
@@ -439,54 +439,54 @@ function addVendorEntryRow() {
 
 function addPaymentEntryRow() {
   createManualRow("paymentEntryRows", `
-    <div class="typeahead-field">
-      <input type="text" class="paymentParty" placeholder="Party name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
-      <div class="typeahead-box manual-party-suggest-box"></div>
-    </div>
-    <input type="number" class="paymentAmount" placeholder="Amount" min="0" step="0.01">
-    <select class="paymentMode">
-      <option value="Cash">Cash</option>
-      <option value="Online">Online</option>
-      <option value="Bank">Bank</option>
-      <option value="Credit">Credit</option>
-    </select>
-    <select class="paymentDirection">
-      <option value="RECEIVED">Received</option>
-      <option value="PAID">Paid</option>
-    </select>
+    <div class="form-field"><span>Party</span><div class="typeahead-field">
+        <input type="text" class="paymentParty" placeholder="Party name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+        <div class="typeahead-box manual-party-suggest-box"></div>
+      </div></div>
+    <label class="form-field"><span>Amount</span><input type="number" class="paymentAmount" placeholder="0" min="0" step="0.01"></label>
+    <label class="form-field"><span>Mode</span><select class="paymentMode">
+        <option value="Cash">Cash</option>
+        <option value="Online">Online</option>
+        <option value="Bank">Bank</option>
+        <option value="Credit">Credit</option>
+      </select></label>
+    <label class="form-field"><span>Direction</span><select class="paymentDirection">
+        <option value="RECEIVED">Received</option>
+        <option value="PAID">Paid</option>
+      </select></label>
     <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
   `, "payment-entry-row");
 }
 
 function addMortalityEntryRow() {
   createManualRow("mortalityEntryRows", `
-    <input type="text" class="mortalityItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)">
-    <input type="number" class="mortalityNag" placeholder="NAG (optional)" min="0" step="1">
-    <input type="number" class="mortalityWeight" placeholder="Weight (optional)" min="0" step="0.01">
+    <label class="form-field"><span>Hen type</span><input type="text" class="mortalityItem" placeholder="BB, CB..." list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)"></label>
+    <label class="form-field"><span>NAG</span><input type="number" class="mortalityNag" placeholder="Optional" min="0" step="1"></label>
+    <label class="form-field"><span>Weight (kg)</span><input type="number" class="mortalityWeight" placeholder="Optional" min="0" step="0.01"></label>
     <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
   `, "mortality-entry-row");
 }
 
 function addOpeningBalanceEntryRow() {
   createManualRow("openingBalanceEntryRows", `
-    <div class="typeahead-field">
-      <input type="text" class="openingBalanceParty" placeholder="Party name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
-      <div class="typeahead-box manual-party-suggest-box"></div>
-    </div>
-    <input type="number" class="openingBalanceAmount" placeholder="Opening balance" min="0" step="0.01">
-    <select class="openingBalanceType">
-      <option value="RECEIVABLE">Receivable</option>
-      <option value="PAYABLE">Payable</option>
-    </select>
+    <div class="form-field"><span>Party</span><div class="typeahead-field">
+        <input type="text" class="openingBalanceParty" placeholder="Party name" autocomplete="off" oninput="suggestManualParties(this)" onfocus="suggestManualParties(this)" onblur="scheduleUploadPartySuggestionHide(this.parentElement.querySelector('.manual-party-suggest-box'))">
+        <div class="typeahead-box manual-party-suggest-box"></div>
+      </div></div>
+    <label class="form-field"><span>Opening balance</span><input type="number" class="openingBalanceAmount" placeholder="0" min="0" step="0.01"></label>
+    <label class="form-field"><span>Balance type</span><select class="openingBalanceType">
+        <option value="RECEIVABLE">Receivable</option>
+        <option value="PAYABLE">Payable</option>
+      </select></label>
     <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
   `, "opening-balance-entry-row");
 }
 
 function addOpeningStockEntryRow() {
   createManualRow("openingStockEntryRows", `
-    <input type="text" class="openingStockItem" placeholder="Hen type" list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)">
-    <input type="number" class="openingStockNag" placeholder="Opening NAG" min="0" step="1">
-    <input type="number" class="openingStockWeight" placeholder="Opening kgs" min="0" step="0.01">
+    <label class="form-field"><span>Hen type</span><input type="text" class="openingStockItem" placeholder="BB, CB..." list="itemSuggestions" autocomplete="off" oninput="suggestItems(this)"></label>
+    <label class="form-field"><span>Opening NAG</span><input type="number" class="openingStockNag" placeholder="0" min="0" step="1"></label>
+    <label class="form-field"><span>Opening kg</span><input type="number" class="openingStockWeight" placeholder="0" min="0" step="0.01"></label>
     <button type="button" class="row-remove-button" onclick="removeManualEntryRow(this)">Remove</button>
   `, "opening-stock-entry-row");
 }
@@ -516,17 +516,20 @@ function calculateManualRowAmount(weight, rate) {
 
 async function fetchUploadPartyDetails(name) {
   const query = String(name || "").trim();
-  if (!query) return { phone: "", balance: 0 };
+  if (!query) return { phone: "", balance: 0, receivable: 0, payable: 0 };
 
   try {
     const data = await optionalApiCall(`/party/profile?name=${encodeURIComponent(query)}`, null, "GET", null, { cache: false });
+    const party = data?.party || {};
     return {
       phone: sanitizeWhatsAppPhoneNumber(data?.party?.phone || data?.phone || ""),
-      balance: Number(data?.party?.balance_after || data?.balance_after || 0)
+      balance: Number(party.balance_after || data?.balance_after || 0),
+      receivable: Number(party.receivable_balance || data?.balances?.receivable || 0),
+      payable: Number(party.payable_balance || data?.balances?.payable || 0)
     };
   } catch (error) {
     console.error(error);
-    return { phone: "", balance: 0 };
+    return { phone: "", balance: 0, receivable: 0, payable: 0 };
   }
 }
 
@@ -599,7 +602,7 @@ async function sendDealerEntryOnWhatsApp(button) {
     return;
   }
 
-  openUploadWhatsApp(party.phone, buildDealerWhatsAppMessage(payload, workingDate, party.balance));
+  openUploadWhatsApp(party.phone, buildDealerWhatsAppMessage(payload, workingDate, party.payable));
   showToast("WhatsApp opened for dealer");
 }
 
@@ -631,7 +634,7 @@ async function sendVendorEntryOnWhatsApp(button) {
     return;
   }
 
-  openUploadWhatsApp(party.phone, buildVendorWhatsAppMessage(payload, workingDate, party.balance));
+  openUploadWhatsApp(party.phone, buildVendorWhatsAppMessage(payload, workingDate, party.receivable));
   showToast("WhatsApp opened for vendor");
 }
 

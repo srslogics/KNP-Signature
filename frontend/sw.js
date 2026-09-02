@@ -1,19 +1,19 @@
-const SHELL_CACHE = "knp-shell-v20260901-1";
-const STATIC_CACHE = "knp-static-v20260901-1";
+const SHELL_CACHE = "knp-shell-v20260902-2";
+const STATIC_CACHE = "knp-static-v20260902-2";
 
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./css/style.css?v=20260803-1",
+  "./css/style.css?v=20260902-2",
   "./js/api.js?v=20260803-1",
-  "./js/app.js?v=20260901-1",
-  "./js/upload.js?v=20260803-1",
-  "./js/dashboard.js?v=20260803-1",
-  "./js/ledger.js?v=20260803-1",
+  "./js/app.js?v=20260902-2",
+  "./js/upload.js?v=20260902-2",
+  "./js/dashboard.js?v=20260902-2",
+  "./js/ledger.js?v=20260902-2",
   "./js/analytics.js?v=20260803-1",
-  "./js/retail.js?v=20260901-1",
+  "./js/retail.js?v=20260902-2",
   "./js/daily-sheet.js?v=20260803-1",
-  "./js/reports.js?v=20260812-2",
+  "./js/reports.js?v=20260902-2",
   "./assets/srs-logics-logo-small.png?v=20260515-1",
   "./assets/srs-logics-logo.png?v=20260515-1",
   "./manifest.webmanifest?v=20260803-1"

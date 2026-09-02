@@ -17,6 +17,13 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 from app.db import SessionLocal
 from app import models
+from app.finance import (
+    build_account_ledger,
+    empty_balances,
+    normalize_balances,
+    retail_bill_id_from_source_ref,
+    summarize_transactions,
+)
 from sqlalchemy import case, func, text, or_, and_, exists, cast, String
 from sqlalchemy.exc import OperationalError
 from decimal import Decimal
@@ -1029,7 +1036,7 @@ def settled_retail_bill_keys(db: Session, txns):
         return set()
 
     retail_keys = {
-        (txn.date, txn.party_id, str(txn.bill_number or "").strip())
+        (txn.outlet_id, txn.date, txn.party_id, str(txn.bill_number or "").strip())
         for txn in txns
         if txn.party_id
         and str(txn.bill_number or "").strip()
@@ -1040,13 +1047,15 @@ def settled_retail_bill_keys(db: Session, txns):
     if not retail_keys:
         return set()
 
-    retail_dates = {key[0] for key in retail_keys}
-    retail_parties = {key[1] for key in retail_keys}
-    retail_bill_numbers = {key[2] for key in retail_keys}
+    retail_outlets = {key[0] for key in retail_keys}
+    retail_dates = {key[1] for key in retail_keys}
+    retail_parties = {key[2] for key in retail_keys}
+    retail_bill_numbers = {key[3] for key in retail_keys}
 
     return {
-        (bill.date, bill.party_id, str(bill.bill_number or "").strip())
+        (bill.outlet_id, bill.date, bill.party_id, str(bill.bill_number or "").strip())
         for bill in db.query(models.RetailBill).filter(
+            models.RetailBill.outlet_id.in_(list(retail_outlets)),
             models.RetailBill.party_id.in_(list(retail_parties)),
             models.RetailBill.date.in_(list(retail_dates)),
             models.RetailBill.bill_number.in_(list(retail_bill_numbers)),
@@ -1055,247 +1064,134 @@ def settled_retail_bill_keys(db: Session, txns):
     }
 
 
-def summarize_ledger_transactions(txns, settled_keys=None):
-    summarized = []
-    index = 0
-    settled_keys = settled_keys or set()
-
-    while index < len(txns):
-        txn = txns[index]
+def summarize_ledger_transactions(db: Session, txns):
+    bill_ids = set()
+    for txn in txns:
         source_ref = str(getattr(txn, "source_ref", "") or "")
-
-        if source_ref.startswith("retail-bill:"):
-            bill_prefix = ":".join(source_ref.split(":")[:2])
-            grouped = []
-
-            while index < len(txns):
-                candidate = txns[index]
-                candidate_ref = str(getattr(candidate, "source_ref", "") or "")
-                if not candidate_ref.startswith(bill_prefix):
-                    break
-                grouped.append(candidate)
-                index += 1
-
-            first = grouped[0]
-            total_amount = sum(Decimal(g.amount or 0) for g in grouped)
-            total_weight = sum(Decimal(g.weight or 0) for g in grouped)
-            total_quantity = sum(Decimal(g.quantity or 0) for g in grouped)
-            rate_base = total_weight if total_weight > 0 else total_quantity
-            effective_rate = total_amount / rate_base if rate_base > 0 else Decimal("0")
-            bill_key = (first.date, first.party_id, str(first.bill_number or "").strip())
-            delta = Decimal("0") if bill_key in settled_keys else total_amount
-
-            summarized.append({
-                "date": first.date,
-                "type": "SALE",
-                "category": "RETAIL BILL",
-                "item": "Retail Bill",
-                "payment_mode": first.payment_mode or "NA",
-                "bill_number": first.bill_number or "",
-                "amount": total_amount,
-                "delta": delta,
-                "weight": total_weight,
-                "quantity": total_quantity,
-                "rate": effective_rate
-            })
+        bill_id = retail_bill_id_from_source_ref(source_ref)
+        if not bill_id:
+            continue
+        try:
+            bill_ids.add(UUID(bill_id))
+        except ValueError:
             continue
 
-        amount = Decimal(txn.amount or 0)
-        delta = ledger_delta(txn)
-        bill_key = (txn.date, txn.party_id, str(txn.bill_number or "").strip())
-        if (
-            txn.type == "SALE"
-            and (txn.category or "").upper() in ["RETAIL", "RETAIL DRESSED"]
-            and bill_key in settled_keys
-        ):
-            delta = Decimal("0")
-
-        txn_type = txn.type
-        if txn.type == "PAYMENT" and txn.category:
-            txn_type = f"PAYMENT {txn.category}"
-        elif txn.type == "OPENING" and txn.category:
-            txn_type = f"OPENING {txn.category}"
-
-        summarized.append({
-            "date": txn.date,
-            "type": txn_type,
-            "category": txn.category or "",
-            "item": txn.item_type or "",
-            "payment_mode": txn.payment_mode or "NA",
-            "bill_number": txn.bill_number or "",
-            "amount": amount,
-            "delta": delta,
-            "weight": Decimal(txn.weight or 0),
-            "quantity": Decimal(txn.quantity or 0),
-            "rate": Decimal(txn.rate or 0)
-        })
-        index += 1
-
-    return summarized
+    retail_bills = {
+        str(bill.id): bill
+        for bill in db.query(models.RetailBill).filter(
+            models.RetailBill.id.in_(list(bill_ids))
+        ).all()
+    } if bill_ids else {}
+    return summarize_transactions(txns, retail_bills)
 
 
-def build_ledger(db: Session, txns, opening_balance=Decimal("0")):
-    balance = Decimal(opening_balance or 0)
+def serialize_ledger_balances(balances):
+    normalized = normalize_balances(balances)
+    return {key: float(value) for key, value in normalized.items()}
+
+
+def payment_direction_balance(balances, direction):
+    normalized = normalize_balances(balances)
+    if str(direction or "").upper() == "PAID":
+        return normalized["payable"]
+    return normalized["receivable"]
+
+
+def build_ledger(db: Session, txns, opening_balances=None):
+    balances, postings = build_account_ledger(
+        summarize_ledger_transactions(db, txns),
+        opening_balances,
+    )
     ledger = []
-    settled_keys = settled_retail_bill_keys(db, txns)
-
-    for txn in summarize_ledger_transactions(txns, settled_keys):
-        amount = Decimal(txn["amount"] or 0)
-        delta = Decimal(txn["delta"] or 0)
-        balance += delta
-
+    for posting in postings:
         ledger.append({
-            "date": str(txn["date"]),
-            "type": txn["type"],
-            "bill_number": txn["bill_number"] or "",
-            "category": txn["category"] or "",
-            "item": txn["item"] or "",
-            "quantity": float(Decimal(txn["quantity"] or 0)),
-            "weight": float(Decimal(txn["weight"] or 0)),
-            "rate": float(Decimal(txn.get("rate") or 0)),
-            "payment_mode": txn["payment_mode"] or "NA",
-            "amount": float(amount),
-            "delta": float(delta),
-            "balance": float(balance)
+            "date": str(posting["date"]),
+            "account": posting["account"],
+            "type": posting["type"],
+            "bill_number": posting["bill_number"] or "",
+            "category": posting["category"] or "",
+            "item": posting["item"] or "",
+            "quantity": float(Decimal(posting["quantity"] or 0)),
+            "weight": float(Decimal(posting["weight"] or 0)),
+            "rate": float(Decimal(posting.get("rate") or 0)),
+            "payment_mode": posting["payment_mode"] or "NA",
+            "amount": float(Decimal(posting["amount"] or 0)),
+            "debit": float(posting["debit"]),
+            "credit": float(posting["credit"]),
+            "delta": float(posting["delta"]),
+            "account_balance": float(posting["account_balance"]),
+            "net_balance": float(posting["net_balance"]),
+            "balance": float(posting["account_balance"]),
         })
+    return balances, ledger
 
-    return balance, ledger
 
-
-def build_party_summary_for_period(txns, opening_balance, closing_balance):
-    last_txn = txns[-1] if txns else None
-    total_sales = sum(Decimal(t.amount or 0) for t in txns if t.type == "SALE")
-    total_purchase = sum(Decimal(t.amount or 0) for t in txns if t.type == "PURCHASE")
-    total_received = sum(Decimal(t.amount or 0) for t in txns if t.type == "PAYMENT" and t.category == "RECEIVED")
-    total_paid = sum(Decimal(t.amount or 0) for t in txns if t.type == "PAYMENT" and t.category == "PAID")
+def build_party_summary_for_period(ledger, opening_balances, closing_balances):
+    opening = normalize_balances(opening_balances)
+    closing = normalize_balances(closing_balances)
+    total_sales = sum(Decimal(str(row["amount"] or 0)) for row in ledger if row["type"] == "SALE")
+    total_purchase = sum(Decimal(str(row["amount"] or 0)) for row in ledger if row["type"] == "PURCHASE")
+    total_received = sum(Decimal(str(row["amount"] or 0)) for row in ledger if row["type"] == "PAYMENT RECEIVED")
+    total_paid = sum(Decimal(str(row["amount"] or 0)) for row in ledger if row["type"] == "PAYMENT PAID")
 
     return {
-        "opening_balance": float(Decimal(opening_balance or 0)),
+        "opening_balance": float(opening["net"]),
+        "opening_receivable": float(opening["receivable"]),
+        "opening_payable": float(opening["payable"]),
         "total_sales": float(total_sales),
         "total_purchase": float(total_purchase),
         "total_received": float(total_received),
         "total_paid": float(total_paid),
-        "current_balance": float(Decimal(closing_balance or 0)),
-        "last_transaction_date": str(last_txn.date) if last_txn else None
+        "receivable_balance": float(closing["receivable"]),
+        "payable_balance": float(closing["payable"]),
+        "current_balance": float(closing["net"]),
+        "last_transaction_date": ledger[-1]["date"] if ledger else None,
     }
 
 
 def build_party_ledger_window(db: Session, query, start=None, end=None):
-    txns = query.order_by(
-        models.Transaction.date.asc(),
-        models.Transaction.created_at.asc()
-    ).all()
-    txns = filter_party_ledger_transactions(db, txns)
-
-    opening_txns = txns
+    opening_balances = empty_balances()
     if start:
-        opening_txns = [txn for txn in txns if txn.date < start]
-    else:
-        opening_txns = []
+        opening_txns = query.filter(
+            models.Transaction.date < start
+        ).order_by(
+            models.Transaction.date.asc(),
+            models.Transaction.created_at.asc(),
+            models.Transaction.id.asc(),
+        ).all()
+        opening_balances, _ = build_ledger(db, opening_txns)
 
-    range_txns = [
-        txn for txn in txns
-        if (not start or txn.date >= start) and (not end or txn.date <= end)
-    ]
+    range_query = query
+    if start:
+        range_query = range_query.filter(models.Transaction.date >= start)
+    if end:
+        range_query = range_query.filter(models.Transaction.date <= end)
+    range_txns = range_query.order_by(
+        models.Transaction.date.asc(),
+        models.Transaction.created_at.asc(),
+        models.Transaction.id.asc(),
+    ).all()
+    range_txns = filter_party_ledger_transactions(db, range_txns)
 
-    opening_balance = Decimal("0")
-    if opening_txns:
-        opening_balance, _ = build_ledger(db, opening_txns)
-
-    closing_balance = opening_balance
+    closing_balances = opening_balances
     ledger = []
     if range_txns:
-        closing_balance, ledger = build_ledger(db, range_txns, opening_balance=opening_balance)
+        closing_balances, ledger = build_ledger(db, range_txns, opening_balances=opening_balances)
 
-    return opening_balance, closing_balance, range_txns, ledger
+    return opening_balances, closing_balances, range_txns, ledger
 
 
 def build_party_summary(db: Session, txns, balance):
-    last_txn = txns[-1] if txns else None
-    last_date = last_txn.date if last_txn else None
-    opening_balance = Decimal("0")
-    day_txns = []
-    settled_keys = settled_retail_bill_keys(db, txns)
-
-    if last_date:
-        for txn in txns:
-            if txn.date >= last_date:
-                day_txns.append(txn)
-            else:
-                delta = ledger_delta(txn)
-                bill_key = (txn.date, txn.party_id, str(txn.bill_number or "").strip())
-                if (
-                    txn.type == "SALE"
-                    and (txn.category or "").upper() in ["RETAIL", "RETAIL DRESSED"]
-                    and bill_key in settled_keys
-                ):
-                    delta = Decimal("0")
-                opening_balance += delta
-
-    total_sales = sum(Decimal(t.amount or 0) for t in day_txns if t.type == "SALE")
-    total_purchase = sum(Decimal(t.amount or 0) for t in day_txns if t.type == "PURCHASE")
-    total_received = sum(Decimal(t.amount or 0) for t in day_txns if t.type == "PAYMENT" and t.category == "RECEIVED")
-    total_paid = sum(Decimal(t.amount or 0) for t in day_txns if t.type == "PAYMENT" and t.category == "PAID")
-
-    return {
-        "opening_balance": float(opening_balance),
-        "total_sales": float(total_sales),
-        "total_purchase": float(total_purchase),
-        "total_received": float(total_received),
-        "total_paid": float(total_paid),
-        "current_balance": float(balance),
-        "last_transaction_date": str(last_txn.date) if last_txn else None
-    }
-
-
-def ledger_delta(txn):
-    amount = Decimal(txn.amount or 0)
-
-    if txn.type in ["SALE", "PURCHASE", "OPENING"]:
-        return amount
-
-    if txn.type == "PAYMENT":
-        return -amount
-
-    return Decimal("0")
-
-
-def ledger_balance_case():
-    settled_retail_sale = (
-        func.upper(func.coalesce(models.Transaction.category, "")).in_(["RETAIL", "RETAIL DRESSED"])
-        & models.Transaction.party_id.isnot(None)
-        & exists().where(
-            and_(
-                models.RetailBill.party_id == models.Transaction.party_id,
-                models.RetailBill.outlet_id == models.Transaction.outlet_id,
-                models.RetailBill.date == models.Transaction.date,
-                cast(models.RetailBill.bill_number, String) == cast(models.Transaction.bill_number, String),
-                models.RetailBill.outstanding_amount <= 0
-            )
-        )
-    )
-    return case(
-        (
-            (models.Transaction.type == "SALE") & ~settled_retail_sale,
-            models.Transaction.amount
-        ),
-        (
-            models.Transaction.type.in_(["PURCHASE", "OPENING"]),
-            models.Transaction.amount
-        ),
-        (
-            models.Transaction.type == "PAYMENT",
-            -models.Transaction.amount
-        ),
-        else_=0
-    )
+    balances = normalize_balances(balance)
+    _, ledger = build_ledger(db, txns)
+    return build_party_summary_for_period(ledger, empty_balances(), balances)
 
 
 def receivable_delta(txn, settled_keys=None):
     amount = Decimal(txn.amount or 0)
     settled_keys = settled_keys or set()
 
-    bill_key = (txn.date, txn.party_id, str(txn.bill_number or "").strip())
+    bill_key = (txn.outlet_id, txn.date, txn.party_id, str(txn.bill_number or "").strip())
     if (
         txn.type == "SALE"
         and (txn.category or "").upper() in ["RETAIL", "RETAIL DRESSED"]
@@ -1389,6 +1285,7 @@ def receivable_case():
                 exists().where(
                     and_(
                         models.RetailBill.party_id == models.Transaction.party_id,
+                        models.RetailBill.outlet_id == models.Transaction.outlet_id,
                         models.RetailBill.date == models.Transaction.date,
                         cast(models.RetailBill.bill_number, String) == cast(models.Transaction.bill_number, String),
                         models.RetailBill.outstanding_amount <= 0
@@ -2194,7 +2091,7 @@ def retail_party_balance_after(db: Session, party_id, outlet_id=None):
     if outlet_id:
         txns_query = txns_query.filter(models.Transaction.outlet_id == outlet_id)
     balance_after = txns_query.with_entities(
-        func.coalesce(func.sum(ledger_balance_case()), 0)
+        func.coalesce(func.sum(receivable_case()), 0)
     ).scalar()
     return float(balance_after or 0)
 
@@ -3940,22 +3837,24 @@ def get_party_ledger(
         end = parse_input_date(end_date)
         if not end:
             return {"error": "Invalid end date"}
-    opening_balance, balance, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
+    opening_balances, balances, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
 
     if not txns:
         return {
             "party_id": party_id,
             "party_name": party.name,
-            "total_balance": float(opening_balance),
-            "summary": build_party_summary_for_period([], opening_balance, opening_balance),
+            "total_balance": float(opening_balances["net"]),
+            "balances": serialize_ledger_balances(opening_balances),
+            "summary": build_party_summary_for_period([], opening_balances, opening_balances),
             "ledger": []
         }
 
     return {
         "party_id": party_id,
         "party_name": party.name,
-        "total_balance": float(balance),
-        "summary": build_party_summary_for_period(txns, opening_balance, balance),
+        "total_balance": float(balances["net"]),
+        "balances": serialize_ledger_balances(balances),
+        "summary": build_party_summary_for_period(ledger, opening_balances, balances),
         "ledger": ledger
     }
 
@@ -4015,7 +3914,15 @@ def get_party_profile(name: str, db: Session = Depends(get_db), scope=Depends(ge
         models.Transaction.date.asc(),
         models.Transaction.created_at.asc()
     ).all()
-    balance_after, _ = build_ledger(db, txns)
+    balances, _ = build_ledger(db, txns)
+    serialized_balances = serialize_ledger_balances(balances)
+    party_type = str(party.type or "").upper()
+    if party_type == "VENDOR":
+        primary_balance = balances["receivable"]
+    elif party_type == "DEALER":
+        primary_balance = balances["payable"]
+    else:
+        primary_balance = balances["net"]
 
     return {
         "party": {
@@ -4024,8 +3931,12 @@ def get_party_profile(name: str, db: Session = Depends(get_db), scope=Depends(ge
             "type": party.type or "",
             "phone": party.phone or "",
             "address": party.address or "",
-            "balance_after": float(balance_after or 0)
-        }
+            "balance_after": float(primary_balance),
+            "receivable_balance": serialized_balances["receivable"],
+            "payable_balance": serialized_balances["payable"],
+            "net_balance": serialized_balances["net"],
+        },
+        "balances": serialized_balances,
     }
 
 
@@ -4209,20 +4120,22 @@ def get_ledger_by_name(
             return {"error": "Invalid end date"}
 
     party = db.query(models.Party).filter_by(id=party_id).first()
-    opening_balance, balance, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
+    opening_balances, balances, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
 
     if not txns:
         return {
             "party_name": party.name if party else name,
-            "total_balance": float(opening_balance),
-            "summary": build_party_summary_for_period([], opening_balance, opening_balance),
+            "total_balance": float(opening_balances["net"]),
+            "balances": serialize_ledger_balances(opening_balances),
+            "summary": build_party_summary_for_period([], opening_balances, opening_balances),
             "ledger": []
         }
 
     return {
         "party_name": party.name if party else name,
-        "total_balance": float(balance),
-        "summary": build_party_summary_for_period(txns, opening_balance, balance),
+        "total_balance": float(balances["net"]),
+        "balances": serialize_ledger_balances(balances),
+        "summary": build_party_summary_for_period(ledger, opening_balances, balances),
         "ledger": ledger
     }
 
@@ -4256,7 +4169,7 @@ def get_party_detail(name: str, db: Session = Depends(get_db), scope=Depends(get
     ).order_by(models.Transaction.date.asc()).all()
     txns = filter_party_ledger_transactions(db, txns)
 
-    balance, ledger = build_ledger(db, txns)
+    balances, ledger = build_ledger(db, txns)
 
     return {
         "party": {
@@ -4266,7 +4179,8 @@ def get_party_detail(name: str, db: Session = Depends(get_db), scope=Depends(get
             "phone": party.phone or "",
             "address": party.address or ""
         },
-        "summary": build_party_summary(db, txns, balance),
+        "balances": serialize_ledger_balances(balances),
+        "summary": build_party_summary(db, txns, balances),
         "ledger": ledger
     }
 
@@ -4316,10 +4230,11 @@ def export_report(
             scope
         )
 
-        opening_balance, balance, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
+        opening_balances, balances, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
         rows = [
             {
                 "Date": format_export_date(row["date"]),
+                "Account": row["account"].title(),
                 "Type": row["type"],
                 "Bill No": row.get("bill_number", ""),
                 "Category": row["category"],
@@ -4328,24 +4243,32 @@ def export_report(
                 "KGS": row.get("weight", 0),
                 "Rate": row.get("rate", 0),
                 "Mode": row["payment_mode"],
-                "Amount": row["amount"],
-                "Balance": row["balance"]
+                "Debit": row["debit"],
+                "Credit": row["credit"],
+                "Account Balance": row["account_balance"]
             }
             for row in ledger
         ]
-        rows.append({
-            "Date": "",
-            "Type": "Closing Balance",
-            "Bill No": "",
-            "Category": "",
-            "Item": "",
-            "NAG": "",
-            "KGS": "",
-            "Rate": "",
-            "Mode": "",
-            "Amount": "",
-            "Balance": float(balance)
-        })
+        for account_name, closing_value in [
+            ("Receivable", balances["receivable"]),
+            ("Payable", balances["payable"]),
+            ("Net", balances["net"]),
+        ]:
+            rows.append({
+                "Date": "",
+                "Account": account_name,
+                "Type": "Closing Balance",
+                "Bill No": "",
+                "Category": "",
+                "Item": "",
+                "NAG": "",
+                "KGS": "",
+                "Rate": "",
+                "Mode": "",
+                "Debit": "",
+                "Credit": "",
+                "Account Balance": float(closing_value),
+            })
         period_label = "All Dates"
         if start and end:
             period_label = f"{format_export_date(start)} to {format_export_date(end)}"
@@ -4353,12 +4276,16 @@ def export_report(
             period_label = f"From {format_export_date(start)}"
         elif end:
             period_label = f"Up to {format_export_date(end)}"
-        columns = ["Date", "Type", "Bill No", "Category", "Item", "NAG", "KGS", "Rate", "Mode", "Amount", "Balance"]
+        columns = ["Date", "Account", "Type", "Bill No", "Category", "Item", "NAG", "KGS", "Rate", "Mode", "Debit", "Credit", "Account Balance"]
         filename = safe_filename(f"ledger_{party}")
         meta_rows = [
             f"Party: {party_row.name if party_row else party}",
             f"Period: {period_label}",
-            f"Opening Balance: {float(opening_balance):,.2f}",
+            f"Opening Receivable: {float(opening_balances['receivable']):,.2f}",
+            f"Opening Payable: {float(opening_balances['payable']):,.2f}",
+            f"Closing Receivable: {float(balances['receivable']):,.2f}",
+            f"Closing Payable: {float(balances['payable']):,.2f}",
+            f"Net Balance: {float(balances['net']):,.2f}",
         ]
         return report_response(rows, columns, filename, file_format, f"Ledger Report - {party}", meta_rows=meta_rows)
 
@@ -4412,32 +4339,36 @@ def export_report(
         return report_response(rows, columns, "financial_summary", file_format, "Financial Summary")
 
     if report_type == "outstanding":
+        balance_query = db.query(
+            models.Party.name.label("party_name"),
+            models.Party.type.label("party_type"),
+            func.coalesce(func.sum(receivable_case()), 0).label("receivable"),
+            func.coalesce(func.sum(payable_case()), 0).label("payable"),
+        ).join(
+            models.Transaction,
+            models.Transaction.party_id == models.Party.id,
+        )
+        balance_query = apply_outlet_scope(balance_query, models.Transaction, scope)
+        if end:
+            balance_query = balance_query.filter(models.Transaction.date <= end)
+
         rows = []
-        parties = db.query(models.Party).order_by(models.Party.name.asc()).all()
-
-        for party_row in parties:
-            query = apply_outlet_scope(
-                db.query(models.Transaction).filter_by(party_id=party_row.id),
-                models.Transaction,
-                scope
-            )
-            if start:
-                query = query.filter(models.Transaction.date >= start)
-            if end:
-                query = query.filter(models.Transaction.date <= end)
-            txns = query.all()
-            settled_keys = settled_retail_bill_keys(db, txns)
-            receivable = sum(receivable_delta(t, settled_keys) for t in txns)
-            payable = sum(payable_delta(t) for t in txns)
-
-            if receivable or payable:
-                rows.append({
-                    "Party": party_row.name,
-                    "Type": party_row.type or "",
-                    "Receivable": float(receivable),
-                    "Payable": float(payable),
-                    "Net Outstanding": float(receivable - payable)
-                })
+        for result in balance_query.group_by(
+            models.Party.id,
+            models.Party.name,
+            models.Party.type,
+        ).order_by(models.Party.name.asc()).all():
+            receivable = Decimal(result.receivable or 0)
+            payable = Decimal(result.payable or 0)
+            if receivable == 0 and payable == 0:
+                continue
+            rows.append({
+                "Party": result.party_name,
+                "Type": result.party_type or "",
+                "Receivable": float(receivable),
+                "Payable": float(payable),
+                "Net Outstanding": float(receivable - payable),
+            })
 
         columns = ["Party", "Type", "Receivable", "Payable", "Net Outstanding"]
         return report_response(rows, columns, "outstanding_balances", file_format, "Outstanding Balances")
@@ -4747,8 +4678,8 @@ def top_debtors(start_date: str | None = None, end_date: str | None = None, db: 
     )
     query = apply_outlet_scope(query, models.Transaction, scope)
 
-    if start:
-        query = query.filter(models.Transaction.date >= start)
+    # Outstanding is a balance as at the end date. Filtering out transactions
+    # before the selected period would discard the opening balance.
     if end:
         query = query.filter(models.Transaction.date <= end)
 
@@ -5264,8 +5195,8 @@ def get_payment_receipt(receipt_id: UUID, db: Session = Depends(get_db), current
         models.Transaction.created_at.asc()
     ).all()
     txns = [txn for txn in txns if txn.outlet_id == current_outlet.id]
-    balance_after, _ = build_ledger(db, txns)
-    return serialize_payment_receipt(receipt, balance_after)
+    balances, _ = build_ledger(db, txns)
+    return serialize_payment_receipt(receipt, payment_direction_balance(balances, receipt.direction))
 
 
 @app.post("/payment-receipts")
@@ -5340,8 +5271,8 @@ def create_payment_receipt(payload: dict = Body(...), db: Session = Depends(get_
         models.Transaction.date.asc(),
         models.Transaction.created_at.asc()
     ).all()
-    balance_after, _ = build_ledger(db, txns)
-    return {"receipt": serialize_payment_receipt(receipt, balance_after)}
+    balances, _ = build_ledger(db, txns)
+    return {"receipt": serialize_payment_receipt(receipt, payment_direction_balance(balances, receipt.direction))}
 
 
 @app.put("/payment-receipts/{receipt_id}")
@@ -5438,8 +5369,8 @@ def update_payment_receipt(receipt_id: UUID, payload: dict = Body(...), db: Sess
         models.Transaction.date.asc(),
         models.Transaction.created_at.asc()
     ).all()
-    balance_after, _ = build_ledger(db, txns)
-    return {"receipt": serialize_payment_receipt(receipt, balance_after)}
+    balances, _ = build_ledger(db, txns)
+    return {"receipt": serialize_payment_receipt(receipt, payment_direction_balance(balances, receipt.direction))}
 
 
 @app.get("/retail-bills/{bill_id}")

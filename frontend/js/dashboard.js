@@ -151,7 +151,7 @@ function renderCharts(trend) {
         labels: dates,
         datasets: [
           {
-            label: "Profit",
+            label: "Sales - Purchase",
             data: profit,
             borderColor: "#23785b",
             backgroundColor: "rgb(35 120 91 / 0.12)",
@@ -224,9 +224,9 @@ function renderCharts(trend) {
     const profitPrev = (prev.sales || 0) - (prev.purchase || 0);
 
     if (profitToday > profitPrev) {
-      addInsight("Profit increased vs previous day");
+      addInsight("Sales minus purchases increased vs previous day");
     } else {
-      addInsight("Profit decreased vs previous day");
+      addInsight("Sales minus purchases decreased vs previous day");
     }
 
     if ((today.leakage || 0) > 50) {
