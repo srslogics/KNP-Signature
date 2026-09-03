@@ -59,6 +59,22 @@ creation and printer bridge behavior are not changed by this restoration.
 
 ## Verification and release
 
+Preservation applies to every party, not only the unresolved list. Run
+`scripts/audit_ledger_cutover.py --host HOST --user USER --output PATH` to check
+all parties in all outlets. It prompts for the password and enforces a
+repeatable-read, read-only database transaction. It checks exact carried amounts
+and account direction, missing/duplicate openings, unresolved parties and zero
+balances without importing application startup or modifying records. Payable
+amounts are compared in their own account, not to the net receivable-minus-payable
+sign shown in some reports. The command exits unsuccessfully for any discrepancy.
+
+The 04/09/2026 production audit checked 205 parties across 3 outlets (615
+combinations): 136 exact carried openings, 45 legacy combinations for the 15
+unresolved parties, and 434 zero combinations, including empty outlets. No
+discrepancies were found. The historical balances also matched all 205 entries
+in the saved restoration verification file. This verifies the cutover against
+that reconstruction, not an independent database backup from before the upgrade.
+
 Tests use an isolated SQLite database, not production startup or DDL. They cover
 later transactions, mixed parties, unknown payment categories, paid retail bills,
 outlets, profiles, receipts and filtered/empty report windows, including Excel
