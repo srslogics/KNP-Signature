@@ -16,16 +16,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app import models
 from app.finance import LEDGER_CUTOVER_DATE, build_legacy_ledger, summarize_legacy_transactions
-from app.ledger_cutover import PENDING_PARTY_IDS, allocate_cutover_balance
+from app.ledger_cutover import PENDING_PARTY_IDS, allocate_cutover_balance, is_cutover_opening, project_cutover_openings
 from scripts.prepare_ledger_cutover import bill_maps, connection_url
 
 
-def check_opening(party, historical_balance, account_balances, openings):
+def check_opening(party, historical_balance, account_balances, openings, approved_account=None):
     """Compare account amounts, not net signs: a payable remains money owed."""
     if party.id in PENDING_PARTY_IDS:
         return 'preserved-legacy' if not openings else 'unexpected-opening'
     try:
-        allocation = allocate_cutover_balance(
+        allocation = {'account': approved_account} if approved_account else allocate_cutover_balance(
             party.name, party.type, historical_balance, account_balances)
     except ValueError:
         return 'unresolved-allocation'
@@ -49,13 +49,19 @@ def audit(db):
     txns = db.query(models.Transaction).filter(models.Transaction.party_id.isnot(None)).all()
     history = defaultdict(list)
     openings = defaultdict(list)
+    anchors = defaultdict(list)
+    bills, settled = bill_maps(db, txns)
     for txn in txns:
         key = (txn.party_id, txn.outlet_id)
-        if txn.date < LEDGER_CUTOVER_DATE:
+        if txn.date < LEDGER_CUTOVER_DATE and not is_cutover_opening(txn):
             history[key].append(txn)
-        if str(txn.source_ref or '').startswith('ledger-cutover:'):
+        if is_cutover_opening(txn):
+            anchors[key].append(txn)
+    projected = project_cutover_openings(txns, {party.id: party for party in parties}, bills, settled, LEDGER_CUTOVER_DATE)
+    for txn in projected:
+        key = (txn.party_id, txn.outlet_id)
+        if is_cutover_opening(txn):
             openings[key].append(txn)
-    bills, settled = bill_maps(db, txns)
     outlet_names = {outlet.id: outlet.name for outlet in outlets}
     rows = []
     for party in parties:
@@ -68,7 +74,9 @@ def audit(db):
             old_rows = sorted(history[key], key=lambda row: (row.date, row.created_at, str(row.id)))
             balance, _ = build_legacy_ledger(summarize_legacy_transactions(old_rows, settled))
             accounts, _ = build_account_ledger(summarize_transactions(old_rows, bills))
-            status = check_opening(party, balance, accounts, openings[key])
+            directions = {txn.category for txn in anchors[key]}
+            approved = next(iter(directions)) if len(directions) == 1 else None
+            status = check_opening(party, balance, accounts, openings[key], approved)
             rows.append({
                 'party': party.name, 'party_id': str(party.id),
                 'outlet': outlet_names.get(outlet_id, 'Unassigned'),
@@ -78,7 +86,9 @@ def audit(db):
                 'status': status,
             })
     failures = [row for row in rows if not row['status'].startswith('preserved-')]
-    return {'party_count': len(parties), 'outlet_count': len(outlets),
+    return {'cutover_date': str(LEDGER_CUTOVER_DATE), 'opening_basis': 'projected from legacy closing',
+            'stored_cutover_count': sum(len(rows) for rows in anchors.values()),
+            'party_count': len(parties), 'outlet_count': len(outlets),
             'party_outlet_count': len(rows), 'statuses': dict(Counter(row['status'] for row in rows)),
             'failure_count': len(failures), 'failures': failures, 'rows': rows}
 

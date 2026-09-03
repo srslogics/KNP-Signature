@@ -6,11 +6,11 @@ RECEIVABLE = "RECEIVABLE"
 PAYABLE = "PAYABLE"
 LEGACY_LEDGER = "legacy"
 ACCOUNT_LEDGER = "account"
-LEDGER_CUTOVER_DATE = date(2026, 9, 4)
+LEDGER_CUTOVER_DATE = date(2026, 9, 5)
 
 
 def ledger_mode_for_date(value=None):
-    """Use the restored ledger through 03/09 and account ledger from 04/09."""
+    """Use the restored ledger through 04/09 and account ledger from 05/09."""
     value = value or date.today()
     return ACCOUNT_LEDGER if value >= LEDGER_CUTOVER_DATE else LEGACY_LEDGER
 

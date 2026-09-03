@@ -1,8 +1,14 @@
 # Party Ledger Rules
 
-From 04/09/2026, the party ledger keeps two independent balances for every
-party. Reports ending on or before 03/09/2026 retain the restored historical
+From 05/09/2026, migrated parties use two independent balances. The unresolved
+parties retain their historical running balance without an assumed settlement.
+Reports ending on or before 04/09/2026 retain the restored historical
 mixed-balance calculation.
+
+The September 5 opening is derived from the full September 4 legacy closing.
+Earlier cutover markers are not business transactions and are excluded from
+historical calculations. No stored bills, payments or opening records are moved
+or rewritten to change the cutover date.
 
 | Business event | Account | Debit | Credit | Balance effect |
 | --- | --- | ---: | ---: | --- |

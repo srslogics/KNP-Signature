@@ -24,11 +24,11 @@ from app.finance import (
     summarize_legacy_transactions,
     summarize_transactions,
 )
-from app.ledger_cutover import SETTLED, allocate_cutover_balance
+from app.ledger_cutover import SETTLED, allocate_cutover_balance, is_cutover_opening
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Prepare the 04/09/2026 party-ledger cutover openings.")
+    parser = argparse.ArgumentParser(description="Preview the 05/09/2026 party-ledger cutover openings.")
     parser.add_argument("--database-url", help="Full PostgreSQL URL. Omit to enter connection fields securely.")
     parser.add_argument("--host", help="PostgreSQL host used with the secure password prompt")
     parser.add_argument("--user", default="postgres")
@@ -68,6 +68,8 @@ def bill_maps(db, txns):
 
 def main():
     args = parse_args()
+    if args.apply:
+        raise ValueError("Cutover openings are now derived on read; do not insert another set of openings. Use audit_ledger_cutover.py.")
     engine = create_engine(connection_url(args))
     db = sessionmaker(bind=engine)()
     try:
@@ -81,6 +83,7 @@ def main():
             models.Transaction.created_at,
             models.Transaction.id,
         ).all()
+        txns = [txn for txn in txns if not is_cutover_opening(txn)]
         party_ids = {txn.party_id for txn in txns}
         parties = {
             party.id: party
@@ -137,8 +140,8 @@ def main():
                 "Party": party.name,
                 "Party Type": party.type or "",
                 "Outlet ID": str(outlet_id or ""),
-                "Restored Balance 03/09/2026": legacy_balance,
-                "Opening Account 04/09/2026": allocation["account"],
+                "Restored Balance 04/09/2026": legacy_balance,
+                "Opening Account 05/09/2026": allocation["account"],
                 "Opening Amount": allocation["amount"],
                 "Reason": allocation["reason"],
                 "Action": action,

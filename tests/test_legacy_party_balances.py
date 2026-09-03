@@ -88,19 +88,19 @@ def test_filtered_and_empty_windows_carry_earlier_balance(db, endpoints, account
     result = ledger(endpoints, db, account, start_date='2026-09-02', end_date='2026-09-02')
     assert result['summary']['opening_balance'] == 1000
     assert result['total_balance'] == 1200
-    empty = ledger(endpoints, db, account, start_date='2026-09-05', end_date='2026-09-05')
+    empty = ledger(endpoints, db, account, start_date='2026-09-06', end_date='2026-09-06')
     assert empty['total_balance'] == empty['summary']['opening_balance'] == 1250
     assert empty['ledger'] == []
 
 
-def test_cutover_keeps_historical_rows_old_and_uses_accounts_from_04_september(db, endpoints, account):
-    historical = ledger(endpoints, db, account, end_date='2026-09-03')
+def test_cutover_keeps_historical_rows_old_and_uses_accounts_from_05_september(db, endpoints, account):
+    historical = ledger(endpoints, db, account, end_date='2026-09-04')
     assert historical['ledger_mode'] == 'legacy'
     assert historical['total_balance'] == 1250
     assert len(historical['ledger']) == 5
     assert all(row['ledger_mode'] == 'legacy' for row in historical['ledger'])
 
-    upgraded = ledger(endpoints, db, account, start_date='2026-09-04', end_date='2026-09-04')
+    upgraded = ledger(endpoints, db, account, start_date='2026-09-05', end_date='2026-09-05')
     assert upgraded['ledger_mode'] == 'account'
     assert upgraded['balances']['receivable'] == 1250
     assert upgraded['balances']['payable'] == 0
@@ -111,7 +111,7 @@ def test_cutover_keeps_historical_rows_old_and_uses_accounts_from_04_september(d
 
 def test_current_profiles_and_receipts_switch_to_account_balance_on_cutover(db, endpoints, account):
     party, outlet, _ = account
-    endpoints['ledger_today'] = lambda: date(2026, 9, 4)
+    endpoints['ledger_today'] = lambda: date(2026, 9, 5)
     profile = endpoints['get_party_profile'](party.name, db, {'mode':'single','selected':outlet})
     assert profile['party']['balance_after'] == 1250
     assert profile['party']['receivable_balance'] == 1250
@@ -127,12 +127,12 @@ def test_current_profiles_and_receipts_switch_to_account_balance_on_cutover(db, 
     assert endpoints['get_payment_receipt'](paid.id, db, outlet)['balance_after'] == 0
 
 
-def test_future_cutover_opening_is_hidden_until_04_september(db, endpoints, account):
+def test_future_cutover_opening_is_hidden_until_05_september(db, endpoints, account):
     party, outlet, _ = account
     scope = {'mode':'single', 'selected':outlet}
     assert endpoints['top_debtors'](db=db, scope=scope)['top_debtors'] == []
 
-    endpoints['ledger_today'] = lambda: date(2026, 9, 4)
+    endpoints['ledger_today'] = lambda: date(2026, 9, 5)
     assert endpoints['top_debtors'](db=db, scope=scope)['top_debtors'] == [
         {'party_name': party.name, 'balance': 1250.0}
     ]
@@ -197,3 +197,77 @@ def test_settled_retail_bill_does_not_cross_outlets(db, endpoints, account):
     settled_sale = next(row for row in result['ledger'] if row['bill_number'] == '44')
     assert settled_sale['amount'] == 100
     assert settled_sale['delta'] == 0
+
+
+def test_september_four_activity_is_carried_once_on_five_without_writes(db, endpoints, account):
+    party, outlet, _ = account
+    scope = {'mode': 'single', 'selected': outlet}
+    for day, kind, category, amount in [
+        (4, 'SALE', 'WHOLESALE', 500), (4, 'PAYMENT', 'RECEIVED', 100),
+        (5, 'SALE', 'WHOLESALE', 300), (5, 'PAYMENT', 'RECEIVED', 50),
+    ]:
+        db.add(models.Transaction(date=date(2026,9,day), party_id=party.id, outlet_id=outlet.id,
+            type=kind, category=category, amount=amount))
+    db.commit()
+    before = [(row.id, row.date, row.amount, row.source_ref) for row in db.query(models.Transaction).order_by(models.Transaction.id)]
+    old = ledger(endpoints, db, account, start_date='2026-09-04', end_date='2026-09-04')
+    assert old['ledger_mode'] == 'legacy'
+    assert old['summary']['opening_balance'] == 1250
+    assert old['total_balance'] == 1650
+    assert len(old['ledger']) == 2  # Excludes the obsolete September 4 opening.
+    new = ledger(endpoints, db, account, start_date='2026-09-05', end_date='2026-09-05')
+    assert new['ledger_mode'] == 'account'
+    assert new['ledger'][0]['type'] == 'OPENING RECEIVABLE'
+    assert new['ledger'][0]['amount'] == 1650
+    assert new['total_balance'] == 1900
+    empty = ledger(endpoints, db, account, start_date='2026-09-06', end_date='2026-09-06')
+    assert empty['summary']['opening_balance'] == 1900
+    assert empty['total_balance'] == 1900
+    assert not empty['ledger']
+    endpoints['ledger_today'] = lambda: date(2026,9,5)
+    assert endpoints['get_party_profile'](party.name, db, scope)['party']['balance_after'] == 1900
+    assert endpoints['party_account_balances_as_of'](db, scope, date(2026,9,5))[party.id]['receivable'] == 1900
+    report = endpoints['export_report']('outstanding', file_format='json', end_date='2026-09-05', db=db, scope=scope)
+    assert report['rows'][0]['Receivable'] == 1900
+    assert before == [(row.id, row.date, row.amount, row.source_ref) for row in db.query(models.Transaction).order_by(models.Transaction.id)]
+    assert not db.dirty and not db.new and not db.deleted
+
+
+def test_late_september_four_entry_updates_fifth_opening_without_second_migration(db, endpoints, account):
+    first = ledger(endpoints, db, account, end_date='2026-09-05')
+    assert first['ledger'][0]['amount'] == 1250
+    party, outlet, _ = account
+    db.add(models.Transaction(date=date(2026,9,4), party_id=party.id, outlet_id=outlet.id,
+        type='SALE', category='WHOLESALE', amount=75))
+    db.commit()
+    later = ledger(endpoints, db, account, end_date='2026-09-05')
+    assert later['ledger'][0]['amount'] == 1325
+    assert len(later['ledger']) == 1
+    assert ledger(endpoints, db, account, end_date='2026-09-04')['total_balance'] == 1325
+    assert ledger(endpoints, db, account, end_date='2026-09-03')['total_balance'] == 1250
+
+
+def test_no_old_cutover_opening_is_counted_in_fourth_balance_sheet(db, endpoints, account):
+    party, outlet, _ = account
+    rows = db.query(models.Transaction).filter_by(party_id=party.id, outlet_id=outlet.id).all()
+    result = endpoints['build_balance_sheet_rows_from_ledger'](
+        db, {party.id: {'party_name': party.name, 'txns': rows}}, date(2026,9,4),
+        lambda row: row.type == 'SALE' or (row.type == 'OPENING' and row.category == 'RECEIVABLE'),
+        None, None, None, None)
+    assert result['totals']['balance'] == 50
+
+
+def test_transaction_report_hides_obsolete_cutover_marker(db, endpoints, account):
+    party, outlet, _ = account
+    result = endpoints['export_report']('transactions', file_format='json',
+        start_date='2026-09-04', end_date='2026-09-04', party=party.name,
+        db=db, scope={'mode': 'single', 'selected': outlet})
+    assert result['rows'] == []
+
+
+def test_fifth_balance_sheet_uses_full_legacy_history_not_only_one_side(db, endpoints, account):
+    party, outlet, _ = account
+    result = endpoints['daily_sheet'](date='2026-09-05', sheet_type='vendor',
+        db=db, scope={'mode': 'single', 'selected': outlet})
+    assert result['totals']['old_balance'] == 1250
+    assert result['totals']['balance'] == 1250

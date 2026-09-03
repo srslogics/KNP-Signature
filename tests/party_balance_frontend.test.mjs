@@ -80,7 +80,7 @@ test('ledger switches to receivable and payable columns from the cutover', async
     ledger_mode:'account', total_balance:156386.84,
     balances:{receivable:156386.84,payable:0},
     summary:{opening_receivable:0,opening_payable:0,total_sales:0,total_purchase:0,total_received:0,total_paid:0},
-    ledger:[{date:'2026-09-04',account:'RECEIVABLE',type:'OPENING RECEIVABLE',amount:156386.84,
+    ledger:[{date:'2026-09-05',account:'RECEIVABLE',type:'OPENING RECEIVABLE',amount:156386.84,
       debit:156386.84,credit:0,account_balance:156386.84,net_balance:156386.84}]
   }), showToast:()=>{}});
   vm.runInContext(source('ledger'), app);

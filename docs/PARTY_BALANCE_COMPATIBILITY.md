@@ -1,8 +1,8 @@
 # Party balance cutover
 
 The primary party balance uses the pre-upgrade mixed-ledger calculation through
-03/09/2026. The separate receivable/payable ledger begins on 04/09/2026 from an
-explicit cutover opening. Historical transactions are never rewritten.
+04/09/2026. The separate receivable/payable ledger begins on 05/09/2026 from a
+derived cutover opening. Historical transactions are never rewritten.
 
 ## Rule
 
@@ -23,12 +23,16 @@ The pre-upgrade reference is `07f885e:app/main.py`. The new pure helpers in
 
 ## Cutover opening
 
-Run `scripts/prepare_ledger_cutover.py` in preview mode first, inspect its CSV,
-then rerun with `--apply`. It inserts dated `OPENING` rows with a
-`ledger-cutover:2026-09-04` source reference. The command is idempotent and
-refuses to overwrite a differing opening.
+The cutover was postponed from September 4 to September 5. Existing September 4
+`ledger-cutover:` records remain stored but are excluded from historical totals.
+They supply the already-established account direction, not a second balance.
+The shared read path derives a September 5 opening from the entire legacy
+closing through September 4. Entries added later on September 4 therefore carry
+forward without a second migration or duplicate opening. This projection is
+never added to the database session. The old preparation script now rejects
+`--apply`; use the read-only audit script to verify the projected openings.
 
-Unambiguous parties carry the restored 03/09 closing balance into the one
+Unambiguous parties carry the restored 04/09 closing balance into the one
 account used by their history. AMAR is client-confirmed as receivable. The
 other 15 reviewed parties have NOT been confirmed settled. They retain their
 historical running ledger, including new transactions, until their account
@@ -68,12 +72,14 @@ balances without importing application startup or modifying records. Payable
 amounts are compared in their own account, not to the net receivable-minus-payable
 sign shown in some reports. The command exits unsuccessfully for any discrepancy.
 
-The 04/09/2026 production audit checked 205 parties across 3 outlets (615
+The initial 04/09/2026 production audit checked 205 parties across 3 outlets (615
 combinations): 136 exact carried openings, 45 legacy combinations for the 15
 unresolved parties, and 434 zero combinations, including empty outlets. No
 discrepancies were found. The historical balances also matched all 205 entries
 in the saved restoration verification file. This verifies the cutover against
 that reconstruction, not an independent database backup from before the upgrade.
+The postponed 05/09 projection was audited again with the full 04/09 history and
+reported the same coverage with zero preservation failures.
 
 Tests use an isolated SQLite database, not production startup or DDL. They cover
 later transactions, mixed parties, unknown payment categories, paid retail bills,
@@ -81,7 +87,7 @@ outlets, profiles, receipts and filtered/empty report windows, including Excel
 and PDF exports. Current-record reconstructions are not proof of exact past
 balances when source entries or bill settlement status have since changed.
 
-Deploy matching backend and frontend versions together after verification and a
-database backup. No schema change is required. Prepare the cutover openings
-before 04/09/2026, then deploy the matching application version. Other stock-sheet
+Deploy the date-boundary correction before 05/09/2026. No schema change or
+production data write is required. Verify projected openings with the read-only
+audit. Other stock-sheet
 changes in the same release remain covered by their own tests and rules.

@@ -15,7 +15,7 @@ def party():
 
 
 def opening(amount, account='PAYABLE'):
-    return SimpleNamespace(type='OPENING', date=date(2026, 9, 4),
+    return SimpleNamespace(type='OPENING', date=date(2026, 9, 5),
                            category=account, amount=Decimal(amount))
 
 

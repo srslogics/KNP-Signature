@@ -85,7 +85,7 @@ def test_pending_party_preserves_history_and_new_payments(db, endpoints, party_i
     profile = endpoints['get_party_profile'](party.name, db=db, scope=scope)
     assert profile['party']['balance_after'] == 1249741.929
     report = endpoints['export_report']('outstanding', file_format='json',
-        end_date='2026-09-04', db=db, scope=scope)
+        end_date='2026-09-05', db=db, scope=scope)
     assert report['rows'][0]['Unclassified Balance'] == 1249741.929
     assert report['rows'][0]['Receivable'] is None
     ledger_export = endpoints['export_report']('ledger', file_format='json', party=party.name,
