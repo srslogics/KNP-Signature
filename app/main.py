@@ -18,6 +18,7 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 from app.db import SessionLocal
 from app import models
+from app.ledger_cutover import PENDING_PARTY_IDS
 from app.stock import (
     SOURCE_ITEMS, SOURCE_ALIASES, StockHistory, normalize_source,
     complete_sum, stock_value, refresh_stock_snapshots,
@@ -50,7 +51,9 @@ def ledger_today():
     return datetime.now(BUSINESS_TIMEZONE).date()
 
 
-def ledger_range_error(start, end):
+def ledger_range_error(start, end, party_id=None):
+    if party_id in PENDING_PARTY_IDS:
+        return None
     effective_end = end or ledger_today()
     if start and start < LEDGER_CUTOVER_DATE <= effective_end:
         return "Choose a date range either up to 03/09/2026 or from 04/09/2026"
@@ -1132,6 +1135,7 @@ def party_account_balances_as_of(db, scope, as_of):
     """Account balances from the cutover opening and later postings only."""
     query = apply_outlet_scope(db.query(models.Transaction).filter(
         models.Transaction.party_id.isnot(None),
+        models.Transaction.party_id.notin_(PENDING_PARTY_IDS),
         models.Transaction.date >= LEDGER_CUTOVER_DATE,
         models.Transaction.date <= as_of,
     ), models.Transaction, scope)
@@ -1174,6 +1178,18 @@ def serialize_ledger_balances(balances):
     }
 
 
+def pending_legacy_balances_as_of(db, scope, as_of):
+    txns = apply_outlet_scope(db.query(models.Transaction).filter(
+        models.Transaction.party_id.in_(PENDING_PARTY_IDS),
+        models.Transaction.date <= as_of,
+    ), models.Transaction, scope).all()
+    grouped = {}
+    for txn in txns:
+        grouped.setdefault(txn.party_id, []).append(txn)
+    return {party_id: build_ledger(db, rows, as_of=as_of)[0]["balance"]
+            for party_id, rows in grouped.items()}
+
+
 def payment_direction_balance(balances, direction):
     if balances.get("ledger_mode") == ACCOUNT_LEDGER:
         normalized = normalize_balances(balances)
@@ -1184,6 +1200,9 @@ def payment_direction_balance(balances, direction):
 def build_ledger(db: Session, txns, opening_balances=None, mode=None, as_of=None):
     as_of = as_of or ledger_today()
     mode = mode or ledger_mode_for_date(as_of)
+    preserve_legacy = any(txn.party_id in PENDING_PARTY_IDS for txn in txns)
+    if preserve_legacy:
+        mode = LEGACY_LEDGER
     txns = sorted(txns, key=lambda txn: (txn.date, txn.created_at or datetime.min, str(txn.id)))
     txns = [txn for txn in txns if txn.date <= as_of]
 
@@ -1195,7 +1214,8 @@ def build_ledger(db: Session, txns, opening_balances=None, mode=None, as_of=None
         )
         balances["balance"] = balances["net"]
     else:
-        txns = [txn for txn in txns if txn.date < LEDGER_CUTOVER_DATE]
+        txns = [txn for txn in txns if (preserve_legacy or txn.date < LEDGER_CUTOVER_DATE)
+                and not str(txn.source_ref or "").startswith("ledger-cutover:")]
         balances, _ = build_account_ledger(
             summarize_ledger_transactions(db, txns),
             opening_balances,
@@ -1264,6 +1284,9 @@ def build_party_summary_for_period(ledger, opening_balances, closing_balances):
 def build_party_ledger_window(db: Session, query, start=None, end=None):
     as_of = end or ledger_today()
     mode = ledger_mode_for_date(as_of)
+    preserve_legacy = query.filter(models.Transaction.party_id.in_(PENDING_PARTY_IDS)).first() is not None
+    if preserve_legacy:
+        mode = LEGACY_LEDGER
     opening_balances = empty_balances()
     opening_balances["balance"] = Decimal("0")
     opening_balances["ledger_mode"] = mode
@@ -1273,7 +1296,7 @@ def build_party_ledger_window(db: Session, query, start=None, end=None):
         )
         if mode == ACCOUNT_LEDGER:
             opening_txns = opening_txns.filter(models.Transaction.date >= LEDGER_CUTOVER_DATE)
-        else:
+        elif not preserve_legacy:
             opening_txns = opening_txns.filter(models.Transaction.date < LEDGER_CUTOVER_DATE)
         opening_txns = opening_txns.order_by(
             models.Transaction.date.asc(),
@@ -1287,7 +1310,7 @@ def build_party_ledger_window(db: Session, query, start=None, end=None):
         range_query = range_query.filter(models.Transaction.date >= start)
     if mode == ACCOUNT_LEDGER:
         range_query = range_query.filter(models.Transaction.date >= LEDGER_CUTOVER_DATE)
-    else:
+    elif not preserve_legacy:
         range_query = range_query.filter(models.Transaction.date < LEDGER_CUTOVER_DATE)
     if end:
         range_query = range_query.filter(models.Transaction.date <= end)
@@ -1381,6 +1404,13 @@ def build_balance_sheet_rows_from_ledger(
 
     for party_data in grouped_parties.values():
         txns = [txn for txn in party_data["txns"] if include_txn(txn)]
+        # A carried opening replaces earlier history only for migrated parties.
+        if target_date >= LEDGER_CUTOVER_DATE:
+            txns = [txn for txn in txns if (
+                not str(txn.source_ref or "").startswith("ledger-cutover:")
+                if txn.party_id in PENDING_PARTY_IDS
+                else txn.date >= LEDGER_CUTOVER_DATE
+            )]
         if not txns:
             continue
         old_balance = Decimal("0")
@@ -3698,7 +3728,7 @@ def get_party_ledger(
         end = parse_input_date(end_date)
         if not end:
             return {"error": "Invalid end date"}
-    if error := ledger_range_error(start, end):
+    if error := ledger_range_error(start, end, party_id):
         return {"error": error}
     opening_balances, balances, txns, ledger, mode = build_party_ledger_window(db, query, start=start, end=end)
 
@@ -3980,7 +4010,7 @@ def get_ledger_by_name(
         if not end:
             return {"error": "Invalid end date"}
 
-    if error := ledger_range_error(start, end):
+    if error := ledger_range_error(start, end, party_id):
         return {"error": error}
 
     party = db.query(models.Party).filter_by(id=party_id).first()
@@ -4077,8 +4107,6 @@ def export_report(
     if report_type == "ledger":
         if not party or len(party.strip()) < 2:
             return {"error": "Party name is required for ledger report"}
-        if error := ledger_range_error(start, end):
-            return {"error": error}
 
         normalized = normalize_party_name(party)
         alias = db.query(models.PartyAlias).filter(
@@ -4094,6 +4122,8 @@ def export_report(
             return {"error": "Party not found"}
 
         party_row = db.query(models.Party).filter_by(id=alias.party_id).first()
+        if error := ledger_range_error(start, end, alias.party_id):
+            return {"error": error}
         query = apply_outlet_scope(
             db.query(models.Transaction).filter(models.Transaction.party_id == alias.party_id),
             models.Transaction,
@@ -4198,7 +4228,8 @@ def export_report(
         ), models.Transaction, scope)
         query = query.filter(models.Transaction.date <= as_of)
         query = query.filter(
-            models.Transaction.date >= LEDGER_CUTOVER_DATE
+            or_(models.Transaction.date >= LEDGER_CUTOVER_DATE,
+                models.Transaction.party_id.in_(PENDING_PARTY_IDS))
             if mode == ACCOUNT_LEDGER
             else models.Transaction.date < LEDGER_CUTOVER_DATE
         )
@@ -4211,6 +4242,13 @@ def export_report(
         for party_row in parties:
             balances, _ = build_ledger(db, grouped[party_row.id], mode=mode, as_of=as_of)
             if mode == ACCOUNT_LEDGER:
+                if party_row.id in PENDING_PARTY_IDS:
+                    rows.append({
+                        "Party": party_row.name, "Type": party_row.type or "",
+                        "Receivable": None, "Payable": None, "Net Outstanding": None,
+                        "Unclassified Balance": float(balances["balance"]),
+                    })
+                    continue
                 if not balances["receivable"] and not balances["payable"]:
                     continue
                 rows.append({
@@ -4229,7 +4267,7 @@ def export_report(
                     "Balance": float(balances["balance"]),
                 })
 
-        columns = ["Party", "Type", "Receivable", "Payable", "Net Outstanding"] if mode == ACCOUNT_LEDGER else ["Party", "Type", "Balance"]
+        columns = ["Party", "Type", "Receivable", "Payable", "Net Outstanding", "Unclassified Balance"] if mode == ACCOUNT_LEDGER else ["Party", "Type", "Balance"]
         return report_response(rows, columns, "outstanding_balances", file_format, "Outstanding Balances")
 
     if report_type == "inventory":
@@ -4400,10 +4438,12 @@ def get_dashboard(date: str, db: Session = Depends(get_db), scope=Depends(get_ou
 
         sales = daily_totals.sales or 0
         purchase = daily_totals.purchase or 0
+        unclassified = {}
         if ledger_mode_for_date(target_date) == ACCOUNT_LEDGER:
             party_balances = party_account_balances_as_of(db, scope, target_date)
             receivable = sum((balance["receivable"] for balance in party_balances.values()), Decimal("0"))
             payable = sum((balance["payable"] for balance in party_balances.values()), Decimal("0"))
+            unclassified = pending_legacy_balances_as_of(db, scope, target_date)
         else:
             receivable = totals.receivable or 0
             payable = totals.payable or 0
@@ -4447,6 +4487,8 @@ def get_dashboard(date: str, db: Session = Depends(get_db), scope=Depends(get_ou
         "receivable": float(receivable),
         "payable": float(payable),
         "total_outstanding": float(receivable - payable),
+        "unclassified_balance": float(sum(unclassified.values(), Decimal("0"))),
+        "unclassified_party_count": len(unclassified),
         "retail_sales": float(retail_sales or 0),
         "dressed_sales_amount": float(dressed_sales_amount or 0),
         "payments_received": float(payments_received or 0),

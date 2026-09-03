@@ -27,6 +27,9 @@ async function loadDashboard() {
     setValue("receivable", data.receivable);
     setValue("payable", data.payable);
     setValue("outstanding", data.total_outstanding);
+    setValue("unclassifiedBalance", data.unclassified_balance);
+    const unclassifiedCard = document.getElementById("unclassifiedBalanceCard");
+    if (unclassifiedCard) unclassifiedCard.hidden = !data.unclassified_party_count;
     setValue("dashboardRetailSales", data.retail_sales);
     setValue("dashboardDressedSales", data.dressed_sales_amount);
     setValue("dashboardPaymentsReceived", data.payments_received);

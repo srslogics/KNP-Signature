@@ -6,6 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
@@ -17,6 +18,9 @@ from sqlalchemy import and_, case, cast, create_engine, exists, func, or_, Strin
 from sqlalchemy.orm import Session
 
 from app import finance, models, stock
+from app.ledger_cutover import PENDING_PARTY_IDS
+
+BUSINESS_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
 @pytest.fixture

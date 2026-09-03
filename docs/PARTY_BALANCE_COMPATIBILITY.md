@@ -30,15 +30,23 @@ refuses to overwrite a differing opening.
 
 Unambiguous parties carry the restored 03/09 closing balance into the one
 account used by their history. AMAR is client-confirmed as receivable. The
-remaining reviewed two-sided parties were client-confirmed as cleared and begin
-the new ledger at zero.
+other 15 reviewed parties have NOT been confirmed settled. They retain their
+historical running ledger, including new transactions, until their account
+direction is established. The preparation script rejects unresolved allocations;
+it must not create zero openings or infer settlement for them.
+
+The initial cutover release incorrectly treated those 15 parties as settled and
+omitted their openings. No settlement transactions were inserted. The correction
+removes that unsupported assumption at read time without rewriting any records.
 
 ## Consumers
 
 Party ledger totals, profiles, receipts, retail and WhatsApp balances use the
 historical method before cutover and the account method after cutover. The
-dashboard, top debtors/payables and outstanding report read only cutover opening
-rows plus later entries for dates from 04/09/2026 onward.
+dashboard, top debtors/payables and outstanding report read cutover openings plus
+later entries for migrated parties. Unresolved parties remain on the legacy
+ledger and appear separately as unclassified balances, not guessed receivables
+or payables.
 
 The API returns `ledger_mode` as `legacy` or `account`. Historical views show
 one running Balance. Account views show receivable, payable, debit, credit,

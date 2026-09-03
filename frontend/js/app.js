@@ -793,6 +793,7 @@ function loadPage(page) {
             <div class="dashboard-mini-grid dashboard-ops-grid">
               <div class="dashboard-mini-card"><span>Gross Profit</span><h2 id="profit">N/A</h2></div>
               <div class="dashboard-mini-card"><span>Net position</span><h2 id="outstanding">₹ 0</h2></div>
+              <div class="dashboard-mini-card" id="unclassifiedBalanceCard" hidden><span>Unclassified carried balance</span><h2 id="unclassifiedBalance">₹ 0</h2></div>
               <div class="dashboard-mini-card"><span>Leakage</span><h2 id="leakage">0 kg</h2></div>
               <div class="dashboard-mini-card"><span>Retail sales</span><h2 id="dashboardRetailSales">₹ 0</h2></div>
               <div class="dashboard-mini-card"><span>Dressed sales</span><h2 id="dashboardDressedSales">₹ 0</h2></div>
