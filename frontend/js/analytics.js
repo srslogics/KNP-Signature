@@ -58,7 +58,7 @@ function renderAnalyticsSummary(summary) {
 
   setText("analyticsSales", formatMoney(summary.sales));
   setText("analyticsPurchase", formatMoney(summary.purchase));
-  setText("analyticsProfit", formatMoney(summary.profit));
+  setText("analyticsProfit", summary.profit == null ? "N/A" : formatMoney(summary.profit));
   setText("analyticsCash", formatMoney(summary.net_cash));
 }
 
@@ -102,7 +102,7 @@ function renderTrendCharts(trend) {
     const dates = trend.map(d => d.date);
     const sales = trend.map(d => d.sales || 0);
     const purchase = trend.map(d => d.purchase || 0);
-    const profit = trend.map(d => d.profit || 0);
+    const profit = trend.map(d => d.profit ?? null);
 
     // --- Trend Chart ---
     if (trend && trend.length > 0) {
@@ -156,7 +156,7 @@ function renderLeakageChart(leakage) {
           labels: leakage.map(d => d.date),
           datasets: [{
             label: "Leakage",
-            data: leakage.map(d => d.leakage || 0),
+            data: leakage.map(d => d.leakage ?? null),
             borderColor: "#b64a3d",
             backgroundColor: "rgb(182 74 61 / 0.12)",
             tension: 0.35
@@ -261,7 +261,7 @@ function renderProfitByItemChart(profitByItem) {
           labels: profitByItem.map(d => d.item),
           datasets: [{
             label: "Profit",
-            data: profitByItem.map(d => d.profit || 0),
+            data: profitByItem.map(d => d.profit ?? null),
             backgroundColor: "#23785b"
           }]
         }

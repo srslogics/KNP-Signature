@@ -1,8 +1,18 @@
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 
 RECEIVABLE = "RECEIVABLE"
 PAYABLE = "PAYABLE"
+LEGACY_LEDGER = "legacy"
+ACCOUNT_LEDGER = "account"
+LEDGER_CUTOVER_DATE = date(2026, 9, 4)
+
+
+def ledger_mode_for_date(value=None):
+    """Use the restored ledger through 03/09 and account ledger from 04/09."""
+    value = value or date.today()
+    return ACCOUNT_LEDGER if value >= LEDGER_CUTOVER_DATE else LEGACY_LEDGER
 
 
 def field_value(record, key, default=None):
@@ -100,6 +110,59 @@ def transaction_event(transaction):
         "rate": decimal_value(field_value(transaction, "rate")),
         "source_ref": field_value(transaction, "source_ref", "") or "",
     }
+
+
+def summarize_legacy_transactions(transactions, settled_keys=None):
+    """Pre-upgrade party balance events; never rewrite financial source rows.
+
+    Preserve stored sale amounts and payments, including unclassified payments.
+    Fully settled retail sales have zero balance movement, as in the old ledger.
+    Settlement keys include outlet to avoid matching another shop's bill number.
+    """
+    settled_keys = settled_keys or set()
+    events = []
+    index = 0
+    while index < len(transactions):
+        first = transactions[index]
+        event = transaction_event(first)
+        source_ref = event["source_ref"]
+        grouped = source_ref.startswith("retail-bill:")
+        if grouped:
+            prefix = ":".join(source_ref.split(":")[:2])
+            rows = []
+            while index < len(transactions):
+                candidate = transactions[index]
+                if not str(field_value(candidate, "source_ref", "") or "").startswith(prefix):
+                    break
+                rows.append(candidate)
+                index += 1
+            for target, field in (("amount", "amount"), ("weight", "weight"), ("quantity", "quantity")):
+                event[target] = sum((decimal_value(field_value(row, field)) for row in rows), Decimal("0"))
+            rate_base = event["weight"] if event["weight"] > 0 else event["quantity"]
+            event.update(type="SALE", entry_type="SALE", category="RETAIL BILL", item="Retail Bill",
+                         rate=event["amount"] / rate_base if rate_base > 0 else Decimal("0"))
+        else:
+            index += 1
+
+        entry_type = event["entry_type"]
+        delta = event["amount"] if entry_type in {"SALE", "PURCHASE", "OPENING"} else Decimal("0")
+        if entry_type == "PAYMENT":
+            delta = -event["amount"]
+        bill_key = (field_value(first, "outlet_id"), event["date"], field_value(first, "party_id"),
+                    str(event["bill_number"]).strip())
+        if bill_key in settled_keys and (grouped or (entry_type == "SALE" and event["category"] in {"RETAIL", "RETAIL DRESSED"})):
+            delta = Decimal("0")
+        events.append({**event, "delta": delta})
+    return events
+
+
+def build_legacy_ledger(events, opening_balance=0):
+    balance = decimal_value(opening_balance)
+    rows = []
+    for event in events:
+        balance += event["delta"]
+        rows.append({**event, "balance": balance})
+    return balance, rows
 
 
 def summarize_transactions(transactions, retail_bills=None):

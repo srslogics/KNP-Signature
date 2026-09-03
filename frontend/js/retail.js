@@ -663,23 +663,17 @@ function getCachedPartyProfile(name) {
 
 function partyHasResolvedBalance(party) {
   return party && (
-    party.receivable_balance != null ||
-    party.payable_balance != null ||
     party.balance_after != null ||
     party.party_balance != null
   );
 }
 
-function getPartyReceivableBalance(party) {
-  return Number(party?.receivable_balance ?? party?.balance_after ?? party?.party_balance ?? 0);
+function getPartyDisplayBalance(party) {
+  return Number(party?.balance_after ?? party?.party_balance ?? 0);
 }
 
 function getPartyPaymentBalance(party) {
-  const direction = document.getElementById("paymentReceiptDirection")?.value || "RECEIVED";
-  if (direction === "PAID") {
-    return Number(party?.payable_balance ?? party?.balance_after ?? party?.party_balance ?? 0);
-  }
-  return getPartyReceivableBalance(party);
+  return getPartyDisplayBalance(party);
 }
 
 function getPaymentReceiptOldBalanceValue(receipt = null) {
@@ -772,7 +766,7 @@ function applyRetailPartyToFields(party, mode = retailBillingMode) {
   if (phoneInput) phoneInput.value = party.phone || "";
   if (addressInput) addressInput.value = party.address || "";
   storeLinkedPartyState(input, phoneInput, addressInput, party);
-  setRetailPartyBalance(mode, getPartyReceivableBalance(party));
+  setRetailPartyBalance(mode, getPartyDisplayBalance(party));
   scheduleRetailPreviewRender();
 }
 
@@ -1932,7 +1926,10 @@ function addDressedStockRow(entry = null) {
   const row = document.createElement("div");
   row.className = "retail-item-row dressed-stock-row";
   row.innerHTML = `
-    <input type="text" class="dressedStockItem" placeholder="Item name (optional)" list="retailItemSuggestions" autocomplete="off" oninput="suggestRetailItems(this)">
+    <select class="dressedStockItem" aria-label="Live hen type" required>
+      <option value="">Live hen type</option>
+      ${["BB", "CB", "COCREL", "LEGOAN", "DP"].map(item => `<option value="${item}">${item}</option>`).join("")}
+    </select>
     <input type="number" class="dressedLiveNag" placeholder="Live NAG" min="0" step="1">
     <input type="number" class="dressedLiveWeight" placeholder="Live weight (kg)" min="0" step="0.001">
     <input type="number" class="dressedYieldWeight" placeholder="Dressed weight (kg)" min="0" step="0.001">
@@ -1965,6 +1962,16 @@ async function saveDressedStock() {
   }
   if (!rows.length) {
     showToast("Add at least one dressed stock row");
+    return;
+  }
+  if (rows.some(row => !row.item_name || row.live_quantity === "" || !(Number(row.live_quantity) > 0) || !(Number(row.live_weight) > 0))) {
+    showToast("Select the live hen type and enter the NAG and kg taken for dressing");
+    return;
+  }
+  if (rows.some(row => !Number.isInteger(Number(row.live_quantity)) ||
+      !Number.isFinite(Number(row.live_weight)) || !Number.isFinite(Number(row.dressed_weight)) ||
+      Number(row.dressed_weight) < 0 || Number(row.dressed_weight) > Number(row.live_weight))) {
+    showToast("NAG must be a whole number; dressed kg cannot exceed live kg");
     return;
   }
 
@@ -2533,7 +2540,7 @@ async function hydrateRetailCustomerProfile(name, mode = retailBillingMode) {
       if (phoneInput) phoneInput.value = cachedParty.phone || "";
       if (addressInput) addressInput.value = cachedParty.address || "";
       storeLinkedPartyState(retailField(mode, "customerName"), phoneInput, addressInput, cachedParty);
-      setRetailPartyBalance(mode, getPartyReceivableBalance(cachedParty));
+      setRetailPartyBalance(mode, getPartyDisplayBalance(cachedParty));
       scheduleRetailPreviewRender();
       return;
     }
@@ -2546,7 +2553,7 @@ async function hydrateRetailCustomerProfile(name, mode = retailBillingMode) {
     if (phoneInput) phoneInput.value = party.phone || "";
     if (addressInput) addressInput.value = party.address || "";
     storeLinkedPartyState(retailField(mode, "customerName"), phoneInput, addressInput, party);
-    setRetailPartyBalance(mode, getPartyReceivableBalance(party));
+    setRetailPartyBalance(mode, getPartyDisplayBalance(party));
     scheduleRetailPreviewRender();
   } catch (e) {
     console.error(e);

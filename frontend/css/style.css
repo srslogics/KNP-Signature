@@ -3966,6 +3966,7 @@ button:focus-visible {
 
 .ledger-summary {
   gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .ledger-page .summary-box {
@@ -3985,7 +3986,7 @@ button:focus-visible {
 }
 
 .ledger-metrics {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -4010,6 +4011,10 @@ button:focus-visible {
 }
 
 .ledger-table {
+  min-width: 800px;
+}
+
+.ledger-table.account-ledger {
   min-width: 1020px;
 }
 
@@ -4029,17 +4034,32 @@ button:focus-visible {
   font-weight: 500;
 }
 
-.ledger-table td:nth-child(5) {
+.ledger-table td:nth-child(4) {
   min-width: 250px;
   color: #53615b;
 }
 
-.ledger-table td:nth-child(6),
-.ledger-table td:nth-child(7),
-.ledger-table td:nth-child(8),
-.ledger-table td:nth-child(9) {
+.ledger-table th:nth-child(5),
+.ledger-table th:nth-child(6),
+.ledger-table td:nth-child(5),
+.ledger-table td:nth-child(6) {
   white-space: nowrap;
+  text-align: right;
   font-size: 13px;
+  font-weight: 700;
+}
+
+.ledger-table.account-ledger td:nth-child(5) {
+  min-width: 250px;
+  color: #53615b;
+  text-align: left;
+  font-weight: 500;
+}
+
+.ledger-table.account-ledger th:nth-child(n+6),
+.ledger-table.account-ledger td:nth-child(n+6) {
+  white-space: nowrap;
+  text-align: right;
   font-weight: 700;
 }
 

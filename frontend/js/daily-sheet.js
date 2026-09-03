@@ -91,7 +91,7 @@ async function loadDailySheet() {
     }
 
     meta.className = "notice info";
-    meta.innerHTML = "<strong>Old balance is the balance up to the previous day. Purchases and payment are for the selected day.</strong>";
+    meta.innerHTML = "<strong>Old balance is the balance up to the previous day. Business and payments are for the selected day.</strong>";
     content.appendChild(createBalanceSheetSection(data.title || formatSheetType(sheetType), data.rows || [], data.totals));
   } catch (e) {
     console.error(e);
@@ -100,9 +100,8 @@ async function loadDailySheet() {
   }
 }
 
-function downloadDailySheetExcel() {
-  const date = document.getElementById("dailySheetDate")?.value;
-  const sheetType = document.getElementById("dailySheetType")?.value || "stock";
+async function downloadDailySheetExcel() {
+  const { date, sheetType } = lastDailySheetExport || {};
 
   if (!date) {
     showToast("Load the sheet first");
@@ -110,7 +109,7 @@ function downloadDailySheetExcel() {
   }
 
   try {
-    downloadDailySheetExcelFile(date, sheetType);
+    await downloadDailySheetExcelFile(date, sheetType);
   } catch (error) {
     console.error(error);
     showToast("Excel download failed");
@@ -231,17 +230,18 @@ function createFinalSummarySection(summary) {
     summary.transport_mortality,
     summary.shop_mortality,
     summary.sales,
+    summary.live_cut,
     summary.closing_stock,
     summary.actual_stock,
     summary.short_by
   ];
-  wrapper.appendChild(createSheetTable(rows, null));
+  wrapper.appendChild(createSheetTable(rows.filter(Boolean), null));
 
   const profitCard = document.createElement("div");
   profitCard.className = "dashboard-kpi-card sheet-profit-box tone-green";
   profitCard.innerHTML = `
     <span>Gross Profit</span>
-    <h2>${formatNumber(summary.gross_profit?.rate)}%</h2>
+    <h2>${formatMetricDisplay(summary.gross_profit?.rate, "%")}</h2>
     <p>${formatMoneyCompact(summary.gross_profit?.total)}</p>
   `;
   wrapper.appendChild(profitCard);
@@ -342,6 +342,7 @@ function getDailyMetricTone(label) {
 }
 
 function createBalanceSheetSection(title, rows, totals) {
+  const businessLabel = title.startsWith("Vendor") ? "Sales" : "Purchases";
   const wrapper = document.createElement("div");
   wrapper.className = "daily-sheet-section";
 
@@ -358,7 +359,7 @@ function createBalanceSheetSection(title, rows, totals) {
     <strong>How to read this sheet</strong>
     <ul>
       <li><strong>Old Bal</strong>: balance up to the previous day.</li>
-      <li><strong>Purchases</strong>: today's sale or purchase amount for the selected party.</li>
+      <li><strong>${businessLabel}</strong>: today's business amount for the selected party.</li>
       <li><strong>Payment</strong>: money received or paid today.</li>
       <li><strong>Balance</strong>: old balance + today's business - today's payment.</li>
       <li><strong>All Parties</strong>: shows every party in the sheet.</li>
@@ -393,7 +394,7 @@ function createBalanceSheetSection(title, rows, totals) {
       <tr>
         <th>Party Name</th>
         <th>Old Bal</th>
-        <th>Purchases</th>
+        <th>${businessLabel}</th>
         <th>Payment</th>
         <th>Balance</th>
       </tr>
@@ -764,6 +765,7 @@ function formatDisplayDate(date) {
 }
 
 function formatNumber(value) {
+  if (value === null || value === undefined || value === "") return "N/A";
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 3 });
 }
 
@@ -775,6 +777,7 @@ function formatMetricDisplay(value, suffix = "", money = false) {
 }
 
 function formatMoneyCompact(value) {
+  if (value === null || value === undefined || value === "") return "N/A";
   return Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 

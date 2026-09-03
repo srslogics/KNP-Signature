@@ -86,13 +86,13 @@ async function loadDashboard() {
 function setValue(id, value) {
   const element = document.getElementById(id);
   if (!element) return;
-  element.innerText = "₹ " + Number(value || 0).toLocaleString();
+  element.innerText = value == null ? "N/A" : "₹ " + Number(value).toLocaleString();
 }
 
 function setKgValue(id, value) {
   const element = document.getElementById(id);
   if (!element) return;
-  element.innerText = Number(value || 0).toLocaleString() + " kg";
+  element.innerText = value == null ? "N/A" : Number(value).toLocaleString() + " kg";
 }
 
 function setTextValue(id, value) {
@@ -117,7 +117,7 @@ function renderCharts(trend) {
     const dates = trend.map(d => d.date);
     const sales = trend.map(d => d.sales || 0);
     const purchase = trend.map(d => d.purchase || 0);
-    const profit = trend.map(d => d.profit ?? ((d.sales || 0) - (d.purchase || 0)));
+    const profit = trend.map(d => d.profit ?? null);
     const regularBilling = trend.map(d => d.regular_billing || 0);
     const dressedBilling = trend.map(d => d.dressed_billing || 0);
 
@@ -151,7 +151,7 @@ function renderCharts(trend) {
         labels: dates,
         datasets: [
           {
-            label: "Sales - Purchase",
+            label: "Gross Profit",
             data: profit,
             borderColor: "#23785b",
             backgroundColor: "rgb(35 120 91 / 0.12)",
@@ -268,10 +268,10 @@ function renderCharts(trend) {
     rows.forEach(row => {
       const tr = document.createElement("tr");
       appendDashboardCell(tr, row.item);
-      appendDashboardCell(tr, `${Number(row.opening_weight || 0).toLocaleString()} kg`);
+      appendDashboardCell(tr, row.opening_weight == null ? "N/A" : `${Number(row.opening_weight).toLocaleString()} kg`);
       appendDashboardCell(tr, `${Number(row.purchase_weight || 0).toLocaleString()} kg`);
       appendDashboardCell(tr, `${Number(row.sales_weight || 0).toLocaleString()} kg`);
-      appendDashboardCell(tr, `${Number(row.expected_closing_weight || row.closing_weight || 0).toLocaleString()} kg`);
+      appendDashboardCell(tr, row.expected_closing_weight == null ? "N/A" : `${Number(row.expected_closing_weight).toLocaleString()} kg`);
       appendDashboardCell(tr, row.actual_closing_weight === null ? "-" : `${Number(row.actual_closing_weight || 0).toLocaleString()} kg`);
       appendDashboardCell(tr, row.leakage === null ? "-" : `${Number(row.leakage || 0).toLocaleString()} kg`);
       body.appendChild(tr);

@@ -1,6 +1,8 @@
 # Party Ledger Rules
 
-The party ledger keeps two independent balances for every party.
+From 04/09/2026, the party ledger keeps two independent balances for every
+party. Reports ending on or before 03/09/2026 retain the restored historical
+mixed-balance calculation.
 
 | Business event | Account | Debit | Credit | Balance effect |
 | --- | --- | ---: | ---: | --- |

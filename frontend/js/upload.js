@@ -157,7 +157,7 @@ async function handleUpload(inputId, endpoint, label, preview = false) {
       } else {
         const wasUpdated = Boolean(data.replaced_existing);
         const quantityLeakage = Number(data.total_quantity_leakage || 0);
-        const leakageText = `Leakage: ${Number(data.total_leakage || 0).toLocaleString()} kg${quantityLeakage ? `, ${quantityLeakage.toLocaleString()} NAG` : ""}`;
+        const leakageText = data.total_leakage == null ? "Shortage: N/A" : `Shortage: ${Number(data.total_leakage).toLocaleString()} kg${quantityLeakage ? `, ${quantityLeakage.toLocaleString()} NAG` : ""}`;
         showToast(`${wasUpdated ? "Updated" : "Processed"}. ${leakageText}`);
         setUploadStatus("success", `Day ${wasUpdated ? "updated" : "processed"}. ${leakageText}`);
         setProcessDaySummary(
@@ -167,7 +167,8 @@ async function handleUpload(inputId, endpoint, label, preview = false) {
             `Hen types saved: ${Array.isArray(data.items) ? data.items.length : rows.length}`,
             `Expected stock: ${formatProcessMetric(data.total_expected_stock, "kg")} ${formatProcessMetricInline(data.total_expected_nag, "NAG")}`,
             `Actual stock: ${formatProcessMetric(data.total_actual_stock, "kg")} ${formatProcessMetricInline(data.total_actual_nag, "NAG")}`,
-            `Short by: ${formatProcessMetric(data.total_leakage, "kg")} ${formatProcessMetricInline(data.total_quantity_leakage, "NAG")}`
+            `Short by: ${formatProcessMetric(data.total_leakage, "kg")} ${formatProcessMetricInline(data.total_quantity_leakage, "NAG")}`,
+            ...(data.warning ? [data.warning] : [])
           ]
         );
         if (typeof clearOperationalCaches === "function") {
@@ -195,6 +196,7 @@ async function handleUpload(inputId, endpoint, label, preview = false) {
   }
 
   function formatProcessMetric(value, suffix) {
+    if (value === null || value === undefined || value === "") return "N/A";
     return `${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${suffix}`;
   }
 
@@ -602,7 +604,7 @@ async function sendDealerEntryOnWhatsApp(button) {
     return;
   }
 
-  openUploadWhatsApp(party.phone, buildDealerWhatsAppMessage(payload, workingDate, party.payable));
+  openUploadWhatsApp(party.phone, buildDealerWhatsAppMessage(payload, workingDate, party.balance));
   showToast("WhatsApp opened for dealer");
 }
 
@@ -634,7 +636,7 @@ async function sendVendorEntryOnWhatsApp(button) {
     return;
   }
 
-  openUploadWhatsApp(party.phone, buildVendorWhatsAppMessage(payload, workingDate, party.receivable));
+  openUploadWhatsApp(party.phone, buildVendorWhatsAppMessage(payload, workingDate, party.balance));
   showToast("WhatsApp opened for vendor");
 }
 

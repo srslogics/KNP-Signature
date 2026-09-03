@@ -791,7 +791,7 @@ function loadPage(page) {
           <details class="dashboard-more collapsible-section">
             <summary class="section-summary">More daily figures</summary>
             <div class="dashboard-mini-grid dashboard-ops-grid">
-              <div class="dashboard-mini-card"><span>Sales - Purchase</span><h2 id="profit">₹ 0</h2></div>
+              <div class="dashboard-mini-card"><span>Gross Profit</span><h2 id="profit">N/A</h2></div>
               <div class="dashboard-mini-card"><span>Net position</span><h2 id="outstanding">₹ 0</h2></div>
               <div class="dashboard-mini-card"><span>Leakage</span><h2 id="leakage">0 kg</h2></div>
               <div class="dashboard-mini-card"><span>Retail sales</span><h2 id="dashboardRetailSales">₹ 0</h2></div>
@@ -817,7 +817,7 @@ function loadPage(page) {
               <div class="dashboard-card-head">
                 <div>
                   <span>Margin</span>
-                  <h2>Sales - Purchase Trend</h2>
+                  <h2>Gross Profit Trend</h2>
                 </div>
               </div>
               <canvas id="profitChart"></canvas>
@@ -985,16 +985,16 @@ function loadPage(page) {
           </div>
 
           <div class="summary ledger-summary">
-            <div class="summary-box">
+            <div class="summary-box ledger-account-balance" hidden>
               <span>Receivable</span>
               <h2 id="receivableBalance">₹ 0</h2>
             </div>
-            <div class="summary-box">
+            <div class="summary-box ledger-account-balance" hidden>
               <span>Payable</span>
               <h2 id="payableBalance">₹ 0</h2>
             </div>
             <div class="summary-box">
-              <span>Net (Receivable - Payable)</span>
+              <span>Balance</span>
               <h2 id="totalBalance">₹ 0</h2>
             </div>
           </div>
@@ -1003,22 +1003,19 @@ function loadPage(page) {
 
           <div class="card table-card ledger-table-card">
             <table class="ledger-table">
-              <thead>
+              <thead id="ledgerHead">
                 <tr>
                   <th>Date</th>
-                  <th>Account</th>
                   <th>Transaction</th>
                   <th>Ref</th>
                   <th>Details</th>
-                  <th>Debit</th>
-                  <th>Credit</th>
-                  <th>Account Balance</th>
-                  <th>Net</th>
+                  <th>Amount</th>
+                  <th>Balance</th>
                 </tr>
               </thead>
               <tbody id="ledgerBody">
                 <tr>
-                  <td colspan="9" class="empty">Search for a party to view the ledger</td>
+                  <td colspan="6" class="empty">Search for a party to view the ledger</td>
                 </tr>
               </tbody>
             </table>
@@ -1429,8 +1426,8 @@ function loadPage(page) {
               <h2 id="analyticsPurchase">₹ 0</h2>
             </div>
             <div class="metric profit">
-              <span>Sales - Purchase</span>
-              <h2 id="analyticsProfit">₹ 0</h2>
+              <span>Gross Profit</span>
+              <h2 id="analyticsProfit">N/A</h2>
             </div>
             <div class="metric green">
               <span>Net Cash</span>
@@ -1503,7 +1500,7 @@ function loadPage(page) {
             <div class="dashboard-card-head">
               <div>
                 <span>Margin</span>
-                <h2>Sales - Purchase By Hen Type</h2>
+                <h2>Gross Profit By Hen Type</h2>
               </div>
             </div>
             <canvas id="profitByItemChart"></canvas>

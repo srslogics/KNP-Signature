@@ -201,12 +201,12 @@ function formatReportImageValue(column, value) {
     "Amount", "Balance", "Rate", "Sales", "Purchase", "Profit",
     "Payment Received", "Payment Paid", "Opening", "Receivable",
     "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total",
-    "Debit", "Credit", "Account Balance", "Net"
+    "Debit", "Credit", "Account Balance", "Net", "Bill Amount", "Paid", "Outstanding"
   ]);
-  const wholeColumns = new Set(["NAG", "Nag"]);
+  const wholeColumns = new Set(["NAG", "Nag", "Opening NAG", "Actual NAG"]);
   const weightColumns = new Set([
     "KGS", "Kg", "Weight", "Opening Kg", "Purchase Kg", "Sales Kg",
-    "Expected Kg", "Actual Kg", "Leakage Kg"
+    "Expected Kg", "Actual Kg", "Leakage Kg", "Live Cut Kg", "Mortality Kg"
   ]);
   const maximumFractionDigits = wholeColumns.has(column) ? 0 : (weightColumns.has(column) ? 3 : 2);
   const formatted = new Intl.NumberFormat("en-IN", {

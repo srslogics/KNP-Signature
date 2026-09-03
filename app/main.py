@@ -2,6 +2,7 @@ from uuid import UUID, uuid4
 from io import BytesIO
 from urllib.parse import quote
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import hashlib
 import hmac
 import os
@@ -17,12 +18,22 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 from app.db import SessionLocal
 from app import models
+from app.stock import (
+    SOURCE_ITEMS, SOURCE_ALIASES, StockHistory, normalize_source,
+    complete_sum, stock_value, refresh_stock_snapshots,
+)
 from app.finance import (
+    ACCOUNT_LEDGER,
+    LEGACY_LEDGER,
+    LEDGER_CUTOVER_DATE,
     build_account_ledger,
+    build_legacy_ledger,
     empty_balances,
+    ledger_mode_for_date,
     normalize_balances,
     retail_bill_id_from_source_ref,
     summarize_transactions,
+    summarize_legacy_transactions,
 )
 from sqlalchemy import case, func, text, or_, and_, exists, cast, String
 from sqlalchemy.exc import OperationalError
@@ -32,6 +43,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 
 app = FastAPI()
+BUSINESS_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def ledger_today():
+    return datetime.now(BUSINESS_TIMEZONE).date()
+
+
+def ledger_range_error(start, end):
+    effective_end = end or ledger_today()
+    if start and start < LEDGER_CUTOVER_DATE <= effective_end:
+        return "Choose a date range either up to 03/09/2026 or from 04/09/2026"
+    return None
 
 
 def safe_create_index(conn, sql: str):
@@ -1085,28 +1108,108 @@ def summarize_ledger_transactions(db: Session, txns):
     return summarize_transactions(txns, retail_bills)
 
 
+def scoped_stock_histories(db, scope, end):
+    outlet_ids = [outlet.id for outlet in scope["outlets"]] if scope["mode"] == "all" else [resolve_scope_outlet_id(scope)]
+    return [StockHistory(db, outlet_id, end) for outlet_id in outlet_ids]
+
+
+def stock_total_for_day(histories, day, key):
+    return complete_sum(history.snapshot(day)["totals"][key] for history in histories)
+
+
+def financial_events(db, scope, start=None, end=None):
+    query = apply_outlet_scope(db.query(models.Transaction), models.Transaction, scope)
+    if start:
+        query = query.filter(models.Transaction.date >= start)
+    if end:
+        query = query.filter(models.Transaction.date <= end)
+    return summarize_ledger_transactions(db, query.order_by(
+        models.Transaction.date, models.Transaction.created_at, models.Transaction.id
+    ).all())
+
+
+def party_account_balances_as_of(db, scope, as_of):
+    """Account balances from the cutover opening and later postings only."""
+    query = apply_outlet_scope(db.query(models.Transaction).filter(
+        models.Transaction.party_id.isnot(None),
+        models.Transaction.date >= LEDGER_CUTOVER_DATE,
+        models.Transaction.date <= as_of,
+    ), models.Transaction, scope)
+    txns = query.order_by(
+        models.Transaction.party_id,
+        models.Transaction.date,
+        models.Transaction.created_at,
+        models.Transaction.id,
+    ).all()
+    if not txns:
+        return {}
+
+    bill_ids = set()
+    for txn in txns:
+        bill_id = retail_bill_id_from_source_ref(txn.source_ref)
+        if bill_id:
+            try:
+                bill_ids.add(UUID(bill_id))
+            except ValueError:
+                continue
+    bills = {
+        str(bill.id): bill
+        for bill in db.query(models.RetailBill).filter(models.RetailBill.id.in_(bill_ids)).all()
+    } if bill_ids else {}
+
+    grouped = {}
+    for txn in txns:
+        grouped.setdefault(txn.party_id, []).append(txn)
+    return {
+        party_id: build_account_ledger(summarize_transactions(rows, bills))[0]
+        for party_id, rows in grouped.items()
+    }
+
+
 def serialize_ledger_balances(balances):
     normalized = normalize_balances(balances)
-    return {key: float(value) for key, value in normalized.items()}
+    return {
+        **{key: float(value) for key, value in normalized.items()},
+        "balance": float(Decimal(balances.get("balance", normalized["net"]))),
+    }
 
 
 def payment_direction_balance(balances, direction):
-    normalized = normalize_balances(balances)
-    if str(direction or "").upper() == "PAID":
-        return normalized["payable"]
-    return normalized["receivable"]
+    if balances.get("ledger_mode") == ACCOUNT_LEDGER:
+        normalized = normalize_balances(balances)
+        return normalized["payable"] if str(direction or "").upper() == "PAID" else normalized["receivable"]
+    return Decimal(balances.get("balance", 0))
 
 
-def build_ledger(db: Session, txns, opening_balances=None):
-    balances, postings = build_account_ledger(
-        summarize_ledger_transactions(db, txns),
-        opening_balances,
-    )
+def build_ledger(db: Session, txns, opening_balances=None, mode=None, as_of=None):
+    as_of = as_of or ledger_today()
+    mode = mode or ledger_mode_for_date(as_of)
+    txns = sorted(txns, key=lambda txn: (txn.date, txn.created_at or datetime.min, str(txn.id)))
+    txns = [txn for txn in txns if txn.date <= as_of]
+
+    if mode == ACCOUNT_LEDGER:
+        txns = [txn for txn in txns if txn.date >= LEDGER_CUTOVER_DATE]
+        balances, postings = build_account_ledger(
+            summarize_ledger_transactions(db, txns),
+            opening_balances,
+        )
+        balances["balance"] = balances["net"]
+    else:
+        txns = [txn for txn in txns if txn.date < LEDGER_CUTOVER_DATE]
+        balances, _ = build_account_ledger(
+            summarize_ledger_transactions(db, txns),
+            opening_balances,
+        )
+        balances["balance"], postings = build_legacy_ledger(
+            summarize_legacy_transactions(txns, settled_retail_bill_keys(db, txns)),
+            (opening_balances or {}).get("balance", 0),
+        )
+
+    balances["ledger_mode"] = mode
     ledger = []
     for posting in postings:
-        ledger.append({
+        row = {
             "date": str(posting["date"]),
-            "account": posting["account"],
             "type": posting["type"],
             "bill_number": posting["bill_number"] or "",
             "category": posting["category"] or "",
@@ -1116,13 +1219,21 @@ def build_ledger(db: Session, txns, opening_balances=None):
             "rate": float(Decimal(posting.get("rate") or 0)),
             "payment_mode": posting["payment_mode"] or "NA",
             "amount": float(Decimal(posting["amount"] or 0)),
-            "debit": float(posting["debit"]),
-            "credit": float(posting["credit"]),
             "delta": float(posting["delta"]),
-            "account_balance": float(posting["account_balance"]),
-            "net_balance": float(posting["net_balance"]),
-            "balance": float(posting["account_balance"]),
-        })
+            "ledger_mode": mode,
+        }
+        if mode == ACCOUNT_LEDGER:
+            row.update({
+                "account": posting["account"],
+                "debit": float(posting["debit"]),
+                "credit": float(posting["credit"]),
+                "account_balance": float(posting["account_balance"]),
+                "net_balance": float(posting["net_balance"]),
+                "balance": float(posting["net_balance"]),
+            })
+        else:
+            row["balance"] = float(posting["balance"])
+        ledger.append(row)
     return balances, ledger
 
 
@@ -1135,7 +1246,7 @@ def build_party_summary_for_period(ledger, opening_balances, closing_balances):
     total_paid = sum(Decimal(str(row["amount"] or 0)) for row in ledger if row["type"] == "PAYMENT PAID")
 
     return {
-        "opening_balance": float(opening["net"]),
+        "opening_balance": float(opening_balances.get("balance", opening["net"])),
         "opening_receivable": float(opening["receivable"]),
         "opening_payable": float(opening["payable"]),
         "total_sales": float(total_sales),
@@ -1144,28 +1255,44 @@ def build_party_summary_for_period(ledger, opening_balances, closing_balances):
         "total_paid": float(total_paid),
         "receivable_balance": float(closing["receivable"]),
         "payable_balance": float(closing["payable"]),
-        "current_balance": float(closing["net"]),
+        "current_balance": float(closing_balances.get("balance", closing["net"])),
+        "ledger_mode": closing_balances.get("ledger_mode", LEGACY_LEDGER),
         "last_transaction_date": ledger[-1]["date"] if ledger else None,
     }
 
 
 def build_party_ledger_window(db: Session, query, start=None, end=None):
+    as_of = end or ledger_today()
+    mode = ledger_mode_for_date(as_of)
     opening_balances = empty_balances()
+    opening_balances["balance"] = Decimal("0")
+    opening_balances["ledger_mode"] = mode
     if start:
         opening_txns = query.filter(
             models.Transaction.date < start
-        ).order_by(
+        )
+        if mode == ACCOUNT_LEDGER:
+            opening_txns = opening_txns.filter(models.Transaction.date >= LEDGER_CUTOVER_DATE)
+        else:
+            opening_txns = opening_txns.filter(models.Transaction.date < LEDGER_CUTOVER_DATE)
+        opening_txns = opening_txns.order_by(
             models.Transaction.date.asc(),
             models.Transaction.created_at.asc(),
             models.Transaction.id.asc(),
         ).all()
-        opening_balances, _ = build_ledger(db, opening_txns)
+        opening_balances, _ = build_ledger(db, opening_txns, mode=mode, as_of=as_of)
 
     range_query = query
     if start:
         range_query = range_query.filter(models.Transaction.date >= start)
+    if mode == ACCOUNT_LEDGER:
+        range_query = range_query.filter(models.Transaction.date >= LEDGER_CUTOVER_DATE)
+    else:
+        range_query = range_query.filter(models.Transaction.date < LEDGER_CUTOVER_DATE)
     if end:
         range_query = range_query.filter(models.Transaction.date <= end)
+    else:
+        range_query = range_query.filter(models.Transaction.date <= as_of)
     range_txns = range_query.order_by(
         models.Transaction.date.asc(),
         models.Transaction.created_at.asc(),
@@ -1176,15 +1303,16 @@ def build_party_ledger_window(db: Session, query, start=None, end=None):
     closing_balances = opening_balances
     ledger = []
     if range_txns:
-        closing_balances, ledger = build_ledger(db, range_txns, opening_balances=opening_balances)
+        closing_balances, ledger = build_ledger(
+            db, range_txns, opening_balances=opening_balances, mode=mode, as_of=as_of
+        )
 
-    return opening_balances, closing_balances, range_txns, ledger
+    return opening_balances, closing_balances, range_txns, ledger, mode
 
 
 def build_party_summary(db: Session, txns, balance):
-    balances = normalize_balances(balance)
     _, ledger = build_ledger(db, txns)
-    return build_party_summary_for_period(ledger, empty_balances(), balances)
+    return build_party_summary_for_period(ledger, empty_balances(), balance)
 
 
 def receivable_delta(txn, settled_keys=None):
@@ -1236,27 +1364,37 @@ def build_balance_sheet_rows_from_ledger(
     total_payment = Decimal("0")
     total_balance = Decimal("0")
 
+    # Use the same retail sale/payment events as the party ledger, including
+    # fully paid bills. Fetch bill records once for the complete sheet.
+    all_txns = [txn for party_data in grouped_parties.values() for txn in party_data["txns"]]
+    bill_ids = set()
+    for txn in all_txns:
+        value = retail_bill_id_from_source_ref(txn.source_ref)
+        if value:
+            try:
+                bill_ids.add(UUID(value))
+            except ValueError:
+                continue
+    bills = {str(bill.id): bill for bill in db.query(models.RetailBill).filter(
+        models.RetailBill.id.in_(bill_ids)
+    ).all()} if bill_ids else {}
+
     for party_data in grouped_parties.values():
         txns = [txn for txn in party_data["txns"] if include_txn(txn)]
         if not txns:
             continue
-
-        settled_keys = settled_retail_bill_keys(db, txns)
         old_balance = Decimal("0")
         purchases = Decimal("0")
         payment = Decimal("0")
-
-        for txn in txns:
-            if opening_belongs_to_old(txn, target_date):
-                old_balance += running_delta(txn, settled_keys)
-                continue
-
-            if txn.date < target_date:
-                old_balance += running_delta(txn, settled_keys)
-                continue
-
-            purchases += day_purchase_amount(txn, target_date, settled_keys)
-            payment += day_payment_amount(txn, target_date, settled_keys)
+        for event in summarize_transactions(txns, bills):
+            amount = Decimal(event["amount"])
+            is_payment = event["entry_type"] == "PAYMENT"
+            if event["date"] < target_date or event["entry_type"] == "OPENING":
+                old_balance += -amount if is_payment else amount
+            elif is_payment:
+                payment += amount
+            else:
+                purchases += amount
 
         balance = old_balance + purchases - payment
 
@@ -1427,11 +1565,11 @@ def report_response(rows, columns, filename, file_format, title, meta_rows=None)
                     vertical="center"
                 )
                 if isinstance(raw_value, (int, float, Decimal)):
-                    if column in ["Amount", "Balance", "Rate", "Sales", "Purchase", "Profit", "Payment Received", "Payment Paid", "Opening", "Receivable", "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total"]:
+                    if column in ["Amount", "Balance", "Rate", "Sales", "Purchase", "Profit", "Payment Received", "Payment Paid", "Opening", "Receivable", "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total", "Bill Amount", "Paid", "Outstanding", "Debit", "Credit", "Account Balance", "Net"]:
                         cell.number_format = '₹#,##0.00'
-                    elif column in ["KGS", "Kg", "Opening Kg", "Purchase Kg", "Sales Kg", "Expected Kg", "Actual Kg", "Leakage Kg", "Weight"]:
+                    elif column in ["KGS", "Kg", "Opening Kg", "Purchase Kg", "Sales Kg", "Expected Kg", "Actual Kg", "Leakage Kg", "Weight", "Live Cut Kg", "Mortality Kg"]:
                         cell.number_format = '#,##0.000'
-                    elif column in ["NAG", "Nag"]:
+                    elif column in ["NAG", "Nag"] or column.endswith(" NAG"):
                         cell.number_format = '#,##0'
                     if column in ["Amount", "Balance"] and float(raw_value or 0) < 0:
                         cell.font = Font(bold=is_summary_row, color="A94442")
@@ -1489,17 +1627,30 @@ def format_export_date(value):
         return str(value)
 
 
+def ledger_row_details(row):
+    details = [row.get("category"), row.get("item")]
+    if Decimal(str(row.get("quantity") or 0)):
+        details.append(f"{row['quantity']:g} NAG")
+    if Decimal(str(row.get("weight") or 0)):
+        details.append(f"{row['weight']:g} kg")
+    if Decimal(str(row.get("rate") or 0)):
+        details.append(f"Rs {row['rate']:g}/kg")
+    if row.get("payment_mode") and row["payment_mode"] != "NA":
+        details.append(row["payment_mode"])
+    return " | ".join(str(value) for value in details if value)
+
+
 def pdf_format_value(column, value):
     if value in [None, ""]:
         return ""
     if isinstance(value, Decimal):
         value = float(value)
     if isinstance(value, (int, float)):
-        if column in ["Amount", "Balance", "Rate", "Sales", "Purchase", "Profit", "Payment Received", "Payment Paid", "Opening", "Receivable", "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total"]:
+        if column in ["Amount", "Balance", "Rate", "Sales", "Purchase", "Profit", "Payment Received", "Payment Paid", "Opening", "Receivable", "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total", "Bill Amount", "Paid", "Outstanding", "Debit", "Credit", "Account Balance", "Net"]:
             return f"Rs {value:,.2f}"
-        if column in ["KGS", "Kg", "Opening Kg", "Purchase Kg", "Sales Kg", "Expected Kg", "Actual Kg", "Leakage Kg", "Weight"]:
+        if column in ["KGS", "Kg", "Opening Kg", "Purchase Kg", "Sales Kg", "Expected Kg", "Actual Kg", "Leakage Kg", "Weight", "Live Cut Kg", "Mortality Kg"]:
             return f"{value:,.3f}"
-        if column in ["NAG", "Nag"]:
+        if column in ["NAG", "Nag"] or column.endswith(" NAG"):
             return f"{value:,.0f}"
     return str(value)
 
@@ -1564,6 +1715,7 @@ def build_simple_pdf(title, columns, rows, meta_rows=None):
     font_size = 7 if landscape else 8
     col_widths = pdf_column_widths(columns, usable_width)
     number_columns = {"Amount", "Balance", "Rate", "Sales", "Purchase", "Profit", "Payment Received", "Payment Paid", "Opening", "Receivable", "Payable", "Net Outstanding", "Old Bal", "Purchases", "Payment", "Total", "KGS", "Kg", "Opening Kg", "Purchase Kg", "Sales Kg", "Expected Kg", "Actual Kg", "Leakage Kg", "Weight", "NAG", "Nag"}
+    number_columns.update({"Bill Amount", "Paid", "Outstanding", "Live Cut Kg", "Mortality Kg", "Opening NAG", "Actual NAG"})
 
     objects = {
         1: "<< /Type /Catalog /Pages 2 0 R >>",
@@ -1727,97 +1879,55 @@ def append_daily_sheet_goods_rows(export_rows, section_name, section):
 
 def build_daily_sheet_export_report(sheet_payload, sheet_type, target_date):
     if sheet_type in ["vendor", "dealer"]:
-        rows = [
-            {
-                "Party Name": row.get("party_name", ""),
-                "Old Bal": row.get("old_balance", 0),
-                "Purchases": row.get("purchases", 0),
-                "Payment": row.get("payment", 0),
-                "Balance": row.get("balance", 0)
-            }
-            for row in (sheet_payload.get("rows") or [])
-        ]
-        totals = sheet_payload.get("totals") or {}
-        if totals:
-            rows.append({
-                "Party Name": totals.get("party_name", "TOTAL"),
-                "Old Bal": totals.get("old_balance", 0),
-                "Purchases": totals.get("purchases", 0),
-                "Payment": totals.get("payment", 0),
-                "Balance": totals.get("balance", 0)
-            })
-
-        columns = ["Party Name", "Old Bal", "Purchases", "Payment", "Balance"]
-        filename = safe_filename(f"{sheet_type}_balance_sheet_{target_date}")
-        title = sheet_payload.get("title") or f"{sheet_type.title()} Balance Sheet"
-        return report_response(rows, columns, filename, "excel", title)
+        business_label = "Sales" if sheet_type == "vendor" else "Purchases"
+        rows = [{
+            "Party Name": row.get("party_name", ""), "Old Bal": row.get("old_balance", 0),
+            business_label: row.get("purchases", 0), "Payment": row.get("payment", 0),
+            "Balance": row.get("balance", 0),
+        } for row in [*(sheet_payload.get("rows") or []), sheet_payload.get("totals") or {}]]
+        return report_response(
+            rows, ["Party Name", "Old Bal", business_label, "Payment", "Balance"],
+            safe_filename(f"{sheet_type}_balance_sheet_{target_date}"), "excel",
+            sheet_payload.get("title") or "Balance Sheet",
+            meta_rows=[f"Date: {format_export_date(target_date)}"],
+        )
 
     rows = []
-    append_daily_sheet_goods_rows(rows, "Opening Stock", sheet_payload.get("opening_stock") or {})
-    append_daily_sheet_goods_rows(rows, "Purchase Stock", sheet_payload.get("purchase_stock") or {})
-    append_daily_sheet_goods_rows(rows, "Transportation Mortality", sheet_payload.get("transport_mortality_stock") or {})
-    append_daily_sheet_goods_rows(rows, "Shop Mortality", sheet_payload.get("shop_mortality_stock") or {})
-    for section in sheet_payload.get("sales_sections") or []:
-        append_daily_sheet_goods_rows(rows, section.get("title", "Sales"), section)
-
-    final_stock = sheet_payload.get("final_stock") or {}
-    for key in [
-        "total_purchases",
-        "transport_mortality",
-        "shop_mortality",
-        "sales",
-        "closing_stock",
-        "actual_stock",
-        "short_by"
-    ]:
-        row = final_stock.get(key)
-        if row:
+    def stock_rows(section, data):
+        for row in [*(data.get("rows") or []), *([data["total"]] if data.get("total") else [])]:
             rows.append({
-                "Section": "Final Stock",
-                "Label": "Summary",
-                "Name": row.get("goods", ""),
-                "Nag": row.get("nag", ""),
-                "Weight": row.get("weight", ""),
-                "Rate": row.get("rate", ""),
-                "Total": row.get("total", ""),
-                "Mode": "",
-                "Paid": "",
-                "Outstanding": ""
+                "Section": section, "Goods": row.get("goods", ""), "NAG": row.get("nag", ""),
+                "Weight": row.get("weight"), "Rate": row.get("rate"), "Total": row.get("total"),
             })
 
-    retail_credit = sheet_payload.get("retail_credit_sheet") or {}
-    for row in retail_credit.get("rows", []) or []:
+    for name, key in [("Opening Live Stock", "opening_stock"), ("Purchases", "purchase_stock"),
+                      ("Transport Mortality", "transport_mortality_stock"), ("Shop Mortality", "shop_mortality_stock")]:
+        stock_rows(name, sheet_payload.get(key) or {})
+    for section in sheet_payload.get("sales_sections") or []:
+        stock_rows(section.get("title", "Sales"), section)
+    final = sheet_payload.get("final_stock") or {}
+    stock_rows("Final Live Stock", {"rows": [
+        final[key] for key in ("total_purchases", "transport_mortality", "shop_mortality",
+                              "sales", "live_cut", "closing_stock", "actual_stock", "short_by") if key in final
+    ]})
+    for row in (sheet_payload.get("retail_credit_sheet") or {}).get("rows", []):
         rows.append({
-            "Section": "Retail Credit",
-            "Label": "Row",
-            "Name": row.get("customer_name", ""),
-            "Nag": row.get("bill_number", ""),
-            "Weight": row.get("total_amount", ""),
-            "Rate": "",
-            "Total": row.get("outstanding_amount", ""),
-            "Mode": row.get("mode", ""),
-            "Paid": row.get("paid_amount", ""),
-            "Outstanding": row.get("outstanding_amount", "")
+            "Section": "Retail Credit", "Party": row.get("customer_name", ""),
+            "Bill No": row.get("bill_number", ""), "Bill Amount": row.get("total_amount"),
+            "Paid": row.get("paid_amount"), "Outstanding": row.get("outstanding_amount"),
+            "Mode": row.get("payment_mode", ""),
         })
-    total_credit = retail_credit.get("total")
-    if total_credit:
-        rows.append({
-            "Section": "Retail Credit",
-            "Label": "Total",
-            "Name": total_credit.get("label", "TOTAL CREDIT"),
-            "Nag": "",
-            "Weight": total_credit.get("total_amount", ""),
-            "Rate": "",
-            "Total": total_credit.get("outstanding_amount", ""),
-            "Mode": "",
-            "Paid": total_credit.get("paid_amount", ""),
-            "Outstanding": total_credit.get("outstanding_amount", "")
-        })
-
-    columns = ["Section", "Label", "Name", "Nag", "Weight", "Rate", "Total", "Mode", "Paid", "Outstanding"]
-    filename = safe_filename(f"stock_sheet_{target_date}")
-    title = sheet_payload.get("title") or "Stock Sheet"
-    return report_response(rows, columns, filename, "excel", title)
+    credit_total = (sheet_payload.get("retail_credit_sheet") or {}).get("total")
+    if credit_total:
+        rows.append({"Section": "Retail Credit", "Party": "TOTAL",
+                     "Bill Amount": credit_total.get("total_amount"), "Paid": credit_total.get("paid_amount"),
+                     "Outstanding": credit_total.get("outstanding_amount")})
+    columns = ["Section", "Goods", "NAG", "Weight", "Rate", "Total", "Party", "Bill No",
+               "Bill Amount", "Paid", "Outstanding", "Mode"]
+    meta = [f"Date: {format_export_date(target_date)}", "Stock basis: Live birds"]
+    if sheet_payload.get("stock_warning"):
+        meta.append(sheet_payload["stock_warning"])
+    return report_response(rows, columns, f"stock_sheet_{target_date}", "excel", "Stock Sheet", meta_rows=meta)
 
 
 def latest_item_rates(db: Session, target_date, scope=None):
@@ -1878,35 +1988,8 @@ def stock_item_names_query(db: Session, scope=None):
     return items
 
 
-PROCESS_DAY_SOURCE_ITEMS = [
-    "BB",
-    "CB",
-    "COCREL",
-    "LEGOAN",
-    "DP"
-]
-
-RETAIL_SOURCE_TYPE_ALIASES = {
-    "BB": "BB",
-    "BB HOTEL": "BB",
-    "BB SHOP": "BB",
-    "BB WHOLESALE": "BB",
-    "BB DRESS": "BB",
-    "BONE": "BB",
-    "BONELESS": "BB",
-    "DRESS": "BB",
-    "LEG PIC": "BB",
-    "LEG THAI": "BB",
-    "THAI BONELESS": "BB",
-    "WINGS": "BB",
-    "CB": "CB",
-    "CB HOTEL": "CB",
-    "CB SHOP": "CB",
-    "CB WHOLESALE": "CB",
-    "COCREL": "COCREL",
-    "LEGOAN": "LEGOAN",
-    "DP": "DP",
-}
+PROCESS_DAY_SOURCE_ITEMS = list(SOURCE_ITEMS)
+RETAIL_SOURCE_TYPE_ALIASES = SOURCE_ALIASES
 
 
 def normalize_stock_source_key(value):
@@ -1930,9 +2013,9 @@ def format_sheet_row(label, weight=0, rate=0, amount=0, nag=None):
     return {
         "goods": label,
         "nag": float(nag) if nag is not None else "",
-        "weight": float(weight or 0),
-        "rate": float(rate or 0),
-        "total": float(amount or 0)
+        "weight": optional_float(weight),
+        "rate": optional_float(rate),
+        "total": optional_float(amount)
     }
 
 
@@ -2090,10 +2173,9 @@ def retail_party_balance_after(db: Session, party_id, outlet_id=None):
     )
     if outlet_id:
         txns_query = txns_query.filter(models.Transaction.outlet_id == outlet_id)
-    balance_after = txns_query.with_entities(
-        func.coalesce(func.sum(receivable_case()), 0)
-    ).scalar()
-    return float(balance_after or 0)
+    txns = txns_query.order_by(models.Transaction.date, models.Transaction.created_at, models.Transaction.id).all()
+    balances, _ = build_ledger(db, txns)
+    return float(balances["balance"])
 
 
 def filter_party_ledger_transactions(db: Session, txns):
@@ -2331,7 +2413,7 @@ def create_vendor_entries(payload: dict = Body(...), input_date: str = None, db:
     for index, row in enumerate(rows, start=1):
         try:
             party_name = str(row.get("vendor") or row.get("party") or "").strip()
-            item_type = str(row.get("hen_type") or row.get("item_type") or "").strip()
+            item_type = normalize_source(row.get("hen_type") or row.get("item_type"))
             category = str(row.get("category") or "").strip() or None
             quantity = parse_decimal(row.get("nag", row.get("quantity")))
             weight = parse_decimal(row.get("kgs", row.get("weight")))
@@ -2407,7 +2489,7 @@ def create_dealer_entries(payload: dict = Body(...), input_date: str = None, db:
         try:
             party_name = str(row.get("dealer") or row.get("party") or "").strip()
             bill_number = str(row.get("bill_no") or row.get("bill_number") or "").strip() or None
-            item_type = str(row.get("hen_type") or row.get("item_type") or "").strip()
+            item_type = normalize_source(row.get("hen_type") or row.get("item_type"))
             quantity = parse_decimal(row.get("nag", row.get("quantity")))
             weight = parse_decimal(row.get("kgs", row.get("weight")))
             rate = parse_decimal(row.get("rate_per_kg", row.get("rate")))
@@ -2595,7 +2677,7 @@ def create_mortality_entries(payload: dict = Body(...), input_date: str = None, 
 
     for index, row in enumerate(rows, start=1):
         try:
-            item_type = str(row.get("hen_type") or row.get("item_type") or "").strip()
+            item_type = normalize_source(row.get("hen_type") or row.get("item_type"))
             quantity = parse_decimal(row.get("nag", row.get("quantity")))
             weight = parse_decimal(row.get("weight", row.get("kgs")))
 
@@ -2750,7 +2832,7 @@ def create_opening_stock_entries(payload: dict = Body(...), input_date: str = No
 
     for index, row in enumerate(rows, start=1):
         try:
-            item_type = str(row.get("hen_type") or row.get("item_type") or "").strip()
+            item_type = normalize_source(row.get("hen_type") or row.get("item_type"))
             opening_quantity = parse_decimal(row.get("opening_nag", row.get("nag", row.get("quantity"))))
             opening_weight = parse_decimal(row.get("opening_kgs", row.get("kgs", row.get("weight"))))
 
@@ -2886,7 +2968,7 @@ def upload_vendor(file: UploadFile = File(...), preview: bool = False, input_dat
                 skipped += 1
                 row_error(errors, row_number, "Invalid or missing date")
                 continue
-            item_type = str(row[item_col]).strip()
+            item_type = normalize_source(row[item_col])
             category = get_optional_row_value(row, ["CATEGORY"])
             if weight <= 0 or rate <= 0 or (quantity is not None and quantity < 0):
                 skipped += 1
@@ -3050,7 +3132,7 @@ def upload_dealer(file: UploadFile = File(...), preview: bool = False, input_dat
 
             party_name = str(row[party_col]).strip()
             bill_number = get_optional_row_value(row, ["BILL_NO", "BILL NO", "BILL_NUMBER", "BILL NUMBER", "INVOICE_NO", "INVOICE NO"])
-            item_type = str(row[item_col]).strip()
+            item_type = normalize_source(row[item_col])
             weight = float(row[weight_col])
             rate = float(row[rate_col])
             quantity = Decimal(str(float(row[quantity_col]))) if quantity_col and not pd.isna(row[quantity_col]) else None
@@ -3461,7 +3543,7 @@ def upload_opening_stock(file: UploadFile = File(...), preview: bool = False, db
                 continue
 
             target_date = pd.to_datetime(row[date_col], dayfirst=True).date()
-            item_type = str(row[item_col]).strip()
+            item_type = normalize_source(row[item_col])
             opening_weight = Decimal(str(float(row[weight_col])))
             opening_quantity = Decimal(str(float(row[quantity_col]))) if quantity_col and not pd.isna(row[quantity_col]) else None
 
@@ -3514,77 +3596,7 @@ def upload_opening_stock(file: UploadFile = File(...), preview: bool = False, db
 
 @app.post("/process-day")
 def process_day(input_date: str, actual_stock: float, db: Session = Depends(get_db)):
-
-    target_date = parse_input_date(input_date)
-    if not target_date:
-        return {"error": "Invalid date format"}
-
-    # --- Validate stock ---
-    if actual_stock is None or actual_stock < 0:
-        return {"error": "Invalid actual stock"}
-
-    # --- Prevent duplicate processing ---
-    existing = db.query(models.DailyStock).filter_by(date=target_date).first()
-    if existing:
-        return {"error": "Day already processed"}
-
-    try:
-        # --- Get previous day's closing ---
-        prev_stock = db.query(models.DailyStock).filter(
-            models.DailyStock.date < target_date
-        ).order_by(models.DailyStock.date.desc()).first()
-
-        opening_stock = Decimal(str(prev_stock.actual_closing_weight)) if prev_stock else Decimal("0")
-
-        # --- Total purchases ---
-        purchase_weight = db.query(func.sum(models.Transaction.weight)).filter(
-            models.Transaction.date == target_date,
-            models.Transaction.type == "PURCHASE"
-        ).scalar() or 0
-
-        # --- Total sales ---
-        sales_weight = db.query(func.sum(models.Transaction.weight)).filter(
-            models.Transaction.date == target_date,
-            models.Transaction.type == "SALE"
-        ).scalar() or 0
-
-        purchase_weight = Decimal(str(purchase_weight))
-        sales_weight = Decimal(str(sales_weight))
-
-        # --- Expected stock ---
-        expected_stock = opening_stock + purchase_weight - sales_weight
-
-        # --- Leakage ---
-        actual_stock_dec = Decimal(str(actual_stock))
-        leakage = expected_stock - actual_stock_dec
-
-        # --- Save ---
-        daily = models.DailyStock(
-            date=target_date,
-            opening_weight=opening_stock,
-            purchase_weight=purchase_weight,
-            sales_weight=sales_weight,
-            expected_closing_weight=expected_stock,
-            actual_closing_weight=actual_stock_dec,
-            leakage=leakage
-        )
-
-        db.add(daily)
-        db.commit()
-
-    except Exception as e:
-        db.rollback()
-        return {"error": "Processing failed", "details": str(e)}
-
-    return {
-        "date": str(target_date),
-        "opening_stock": float(opening_stock),
-        "purchase": float(purchase_weight),
-        "sales": float(sales_weight),
-        "expected_stock": float(expected_stock),
-        "actual_stock": float(actual_stock_dec),
-        "leakage": float(leakage)
-    }
+    return {"error": "Use Process Day hen-type counts; a combined count cannot identify live stock sources."}
 
 
 @app.post("/process-day/items")
@@ -3592,216 +3604,65 @@ def process_day_items(input_date: str, actual_stock: list[dict], db: Session = D
     target_date = parse_input_date(input_date)
     if not target_date:
         return {"error": "Invalid date format"}
-
     if not actual_stock:
         return {"error": "Enter actual stock for at least one hen type"}
 
-    normalized_actuals = {}
+    actuals = {}
     for row in actual_stock:
-        item = str(row.get("item_type", "")).strip()
+        item = normalize_source(row.get("item_type"))
+        if item not in SOURCE_ITEMS:
+            return {"error": f"Choose a live hen type: {', '.join(SOURCE_ITEMS)}"}
+        if item in actuals:
+            return {"error": f"Duplicate live count for {item}"}
         try:
-            actual_weight = Decimal(str(row.get("actual_weight", "")))
+            weight = Decimal(str(row.get("actual_weight", 0) or 0))
+            quantity = Decimal(str(row.get("actual_quantity", 0) or 0))
+            if not weight.is_finite() or not quantity.is_finite() or weight < 0 or quantity < 0 or quantity != quantity.to_integral_value():
+                raise ValueError()
         except Exception:
-            return {"error": f"Invalid actual stock for {item or 'item'}"}
-
-        actual_quantity_raw = row.get("actual_quantity")
-        try:
-            actual_quantity = Decimal(str(actual_quantity_raw)) if actual_quantity_raw not in [None, ""] else None
-        except Exception:
-            return {"error": f"Invalid actual NAG for {item or 'item'}"}
-
-        if not item or actual_weight < 0 or (actual_quantity is not None and actual_quantity < 0):
-            return {"error": "Invalid hen type, actual stock, or actual NAG"}
-
-        normalized_actuals[item] = {
-            "actual_weight": actual_weight,
-            "actual_quantity": actual_quantity
-        }
-
-    expected_items = list(PROCESS_DAY_SOURCE_ITEMS)
-    for item in expected_items:
-        normalized_actuals.setdefault(item, {
-            "actual_weight": Decimal("0"),
-            "actual_quantity": Decimal("0")
-        })
-
-    existing_rows = db.query(models.DailyItemStock).filter(
-        models.DailyItemStock.outlet_id == current_outlet.id,
-        models.DailyItemStock.date == target_date
-    ).all()
-    replaced_existing = len(existing_rows) > 0
-
-    results = []
+            return {"error": f"Enter non-negative kg and whole NAG for {item}"}
+        actuals[item] = (weight, quantity)
+    for item in SOURCE_ITEMS:
+        actuals.setdefault(item, (Decimal("0"), Decimal("0")))
 
     try:
-        if replaced_existing:
-            db.query(models.DailyItemStock).filter(
-                models.DailyItemStock.outlet_id == current_outlet.id,
-                models.DailyItemStock.date == target_date
-            ).delete(synchronize_session=False)
-
-        for item_type, actuals in normalized_actuals.items():
-            actual_weight = actuals["actual_weight"]
-            actual_quantity = actuals["actual_quantity"]
-            prev_stock = db.query(models.DailyItemStock).filter(
-                models.DailyItemStock.outlet_id == current_outlet.id,
-                models.DailyItemStock.item_type == item_type,
-                models.DailyItemStock.date < target_date
-            ).order_by(models.DailyItemStock.date.desc()).first()
-
-            if prev_stock:
-                opening_weight = Decimal(prev_stock.actual_closing_weight or 0)
-                opening_quantity = Decimal(prev_stock.actual_closing_quantity or 0) if prev_stock.actual_closing_quantity is not None else None
-            else:
-                opening = db.query(models.ItemOpeningStock).filter(
-                    models.ItemOpeningStock.outlet_id == current_outlet.id,
-                    models.ItemOpeningStock.item_type == item_type,
-                    models.ItemOpeningStock.date <= target_date
-                ).order_by(models.ItemOpeningStock.date.desc()).first()
-                opening_weight = Decimal(opening.opening_weight or 0) if opening else Decimal("0")
-                opening_quantity = Decimal(opening.opening_quantity or 0) if opening and opening.opening_quantity is not None else None
-
-            purchase_weight = db.query(func.sum(models.Transaction.weight)).filter(
-                models.Transaction.outlet_id == current_outlet.id,
-                models.Transaction.date == target_date,
-                models.Transaction.item_type == item_type,
-                models.Transaction.type == "PURCHASE"
-            ).scalar() or 0
-            purchase_quantity_raw = db.query(func.sum(models.Transaction.quantity)).filter(
-                models.Transaction.outlet_id == current_outlet.id,
-                models.Transaction.date == target_date,
-                models.Transaction.item_type == item_type,
-                models.Transaction.type == "PURCHASE"
-            ).scalar()
-
-            sales_weight = db.query(func.sum(models.Transaction.weight)).filter(
-                models.Transaction.outlet_id == current_outlet.id,
-                models.Transaction.date == target_date,
-                models.Transaction.item_type == item_type,
-                models.Transaction.type == "SALE"
-            ).scalar() or 0
-            sales_quantity_raw = db.query(func.sum(models.Transaction.quantity)).filter(
-                models.Transaction.outlet_id == current_outlet.id,
-                models.Transaction.date == target_date,
-                models.Transaction.item_type == item_type,
-                models.Transaction.type == "SALE"
-            ).scalar()
-
-            purchase_weight = Decimal(str(purchase_weight))
-            sales_weight = Decimal(str(sales_weight))
-            purchase_quantity = Decimal(purchase_quantity_raw or 0) if purchase_quantity_raw is not None else None
-            sales_quantity = Decimal(sales_quantity_raw or 0) if sales_quantity_raw is not None else None
-            expected_stock = opening_weight + purchase_weight - sales_weight
-            expected_quantity = None
-            if any(value is not None for value in [opening_quantity, purchase_quantity, sales_quantity]):
-                expected_quantity = Decimal(opening_quantity or 0) + Decimal(purchase_quantity or 0) - Decimal(sales_quantity or 0)
-            leakage = expected_stock - actual_weight
-            quantity_leakage = None
-            if expected_quantity is not None or actual_quantity is not None:
-                quantity_leakage = Decimal(expected_quantity or 0) - Decimal(actual_quantity or 0)
-
-            daily = models.DailyItemStock(
-                date=target_date,
-                outlet_id=current_outlet.id,
-                item_type=item_type,
-                opening_quantity=opening_quantity,
-                opening_weight=opening_weight,
-                purchase_quantity=purchase_quantity,
-                purchase_weight=purchase_weight,
-                sales_quantity=sales_quantity,
-                sales_weight=sales_weight,
-                expected_closing_quantity=expected_quantity,
-                expected_closing_weight=expected_stock,
-                actual_closing_quantity=actual_quantity,
-                actual_closing_weight=actual_weight,
-                quantity_leakage=quantity_leakage,
-                leakage=leakage
-            )
-            db.add(daily)
-
-            results.append({
-                "date": str(target_date),
-                "item": item_type,
-                "opening_nag": optional_float(opening_quantity),
-                "opening_stock": float(opening_weight),
-                "purchase_nag": optional_float(purchase_quantity),
-                "purchase": float(purchase_weight),
-                "sales_nag": optional_float(sales_quantity),
-                "sales": float(sales_weight),
-                "expected_nag": optional_float(expected_quantity),
-                "expected_stock": float(expected_stock),
-                "actual_nag": optional_float(actual_quantity),
-                "actual_stock": float(actual_weight),
-                "quantity_leakage": optional_float(quantity_leakage),
-                "leakage": float(leakage)
-            })
-
-        total_opening_weight = sum(Decimal(str(row["opening_stock"])) for row in results)
-        total_purchase_weight = sum(Decimal(str(row["purchase"])) for row in results)
-        total_sales_weight = sum(Decimal(str(row["sales"])) for row in results)
-        total_expected_weight = sum(Decimal(str(row["expected_stock"])) for row in results)
-        total_actual_weight = sum(Decimal(str(row["actual_stock"])) for row in results)
-        total_leakage_weight = sum(Decimal(str(row["leakage"])) for row in results)
-
-        daily_stock = db.query(models.DailyStock).filter(
-            models.DailyStock.outlet_id == current_outlet.id,
-            models.DailyStock.date == target_date
-        ).first()
-        if daily_stock:
-            daily_stock.outlet_id = current_outlet.id
-            daily_stock.opening_weight = total_opening_weight
-            daily_stock.purchase_weight = total_purchase_weight
-            daily_stock.sales_weight = total_sales_weight
-            daily_stock.expected_closing_weight = total_expected_weight
-            daily_stock.actual_closing_weight = total_actual_weight
-            daily_stock.leakage = total_leakage_weight
-        else:
-            db.add(models.DailyStock(
-                date=target_date,
-                outlet_id=current_outlet.id,
-                opening_weight=total_opening_weight,
-                purchase_weight=total_purchase_weight,
-                sales_weight=total_sales_weight,
-                expected_closing_weight=total_expected_weight,
-                actual_closing_weight=total_actual_weight,
-                leakage=total_leakage_weight
+        # Serialize same-outlet counts and downstream snapshot refreshes.
+        db.query(models.Outlet).filter_by(id=current_outlet.id).with_for_update().one()
+        existing = db.query(models.DailyItemStock).filter_by(
+            outlet_id=current_outlet.id, date=target_date
+        )
+        replaced_existing = existing.count() > 0
+        existing.delete(synchronize_session=False)
+        for item, (weight, quantity) in actuals.items():
+            db.add(models.DailyItemStock(
+                outlet_id=current_outlet.id, date=target_date, item_type=item,
+                actual_closing_weight=weight, actual_closing_quantity=quantity,
             ))
-
+        history = refresh_stock_snapshots(db, current_outlet.id, target_date)
+        snapshot = history.snapshot(target_date)
         db.commit()
-
-    except Exception as e:
+    except Exception as exc:
         db.rollback()
-        return {"error": "Processing failed", "details": str(e)}
+        return {"error": "Processing failed", "details": str(exc)}
 
-    sheet_payload = daily_sheet(
-        date=str(target_date),
-        sheet_type="stock",
-        db=db,
-        user=None,
-        scope={
-            "mode": "single",
-            "selected": current_outlet,
-            "outlet": current_outlet,
-            "outlet_id": current_outlet.id,
-        }
-    )
-
-    final_stock = sheet_payload.get("final_stock", {}) if isinstance(sheet_payload, dict) else {}
-    closing_total = final_stock.get("closing_stock", {}) if isinstance(final_stock, dict) else {}
-    actual_total = final_stock.get("actual_stock", {}) if isinstance(final_stock, dict) else {}
-    short_total = final_stock.get("short_by", {}) if isinstance(final_stock, dict) else {}
-
+    total = snapshot["totals"]
     return {
-        "status": "success",
-        "date": str(target_date),
-        "replaced_existing": replaced_existing,
-        "items": results,
-        "total_expected_nag": float(closing_total.get("nag") or 0),
-        "total_expected_stock": float(closing_total.get("weight") or 0),
-        "total_actual_nag": float(actual_total.get("nag") or 0),
-        "total_actual_stock": float(actual_total.get("weight") or 0),
-        "total_quantity_leakage": float(short_total.get("nag") or 0),
-        "total_leakage": float(short_total.get("weight") or 0)
+        "status": "success", "date": str(target_date),
+        "replaced_existing": replaced_existing, "warning": snapshot["warning"],
+        "items": [{
+            "item": row["item"],
+            "opening_stock": optional_float(row["opening_weight"]),
+            "expected_stock": optional_float(row["expected_closing_weight"]),
+            "actual_stock": optional_float(row["actual_closing_weight"]),
+            "actual_nag": optional_float(row["actual_closing_quantity"]),
+            "leakage": optional_float(row["leakage"]),
+        } for row in snapshot["rows"]],
+        "total_expected_nag": optional_float(total["expected_closing_quantity"]),
+        "total_expected_stock": optional_float(total["expected_closing_weight"]),
+        "total_actual_nag": optional_float(total["actual_closing_quantity"]),
+        "total_actual_stock": optional_float(total["actual_closing_weight"]),
+        "total_quantity_leakage": optional_float(total["quantity_leakage"]),
+        "total_leakage": optional_float(total["leakage"]),
     }
 
 
@@ -3837,24 +3698,30 @@ def get_party_ledger(
         end = parse_input_date(end_date)
         if not end:
             return {"error": "Invalid end date"}
-    opening_balances, balances, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
+    if error := ledger_range_error(start, end):
+        return {"error": error}
+    opening_balances, balances, txns, ledger, mode = build_party_ledger_window(db, query, start=start, end=end)
 
     if not txns:
         return {
             "party_id": party_id,
             "party_name": party.name,
-            "total_balance": float(opening_balances["net"]),
+            "total_balance": float(opening_balances["balance"]),
             "balances": serialize_ledger_balances(opening_balances),
             "summary": build_party_summary_for_period([], opening_balances, opening_balances),
+            "ledger_mode": mode,
+            "cutover_date": str(LEDGER_CUTOVER_DATE),
             "ledger": []
         }
 
     return {
         "party_id": party_id,
         "party_name": party.name,
-        "total_balance": float(balances["net"]),
+        "total_balance": float(balances["balance"]),
         "balances": serialize_ledger_balances(balances),
         "summary": build_party_summary_for_period(ledger, opening_balances, balances),
+        "ledger_mode": mode,
+        "cutover_date": str(LEDGER_CUTOVER_DATE),
         "ledger": ledger
     }
 
@@ -3916,13 +3783,7 @@ def get_party_profile(name: str, db: Session = Depends(get_db), scope=Depends(ge
     ).all()
     balances, _ = build_ledger(db, txns)
     serialized_balances = serialize_ledger_balances(balances)
-    party_type = str(party.type or "").upper()
-    if party_type == "VENDOR":
-        primary_balance = balances["receivable"]
-    elif party_type == "DEALER":
-        primary_balance = balances["payable"]
-    else:
-        primary_balance = balances["net"]
+    primary_balance = balances["balance"]
 
     return {
         "party": {
@@ -4119,23 +3980,30 @@ def get_ledger_by_name(
         if not end:
             return {"error": "Invalid end date"}
 
+    if error := ledger_range_error(start, end):
+        return {"error": error}
+
     party = db.query(models.Party).filter_by(id=party_id).first()
-    opening_balances, balances, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
+    opening_balances, balances, txns, ledger, mode = build_party_ledger_window(db, query, start=start, end=end)
 
     if not txns:
         return {
             "party_name": party.name if party else name,
-            "total_balance": float(opening_balances["net"]),
+            "total_balance": float(opening_balances["balance"]),
             "balances": serialize_ledger_balances(opening_balances),
             "summary": build_party_summary_for_period([], opening_balances, opening_balances),
+            "ledger_mode": mode,
+            "cutover_date": str(LEDGER_CUTOVER_DATE),
             "ledger": []
         }
 
     return {
         "party_name": party.name if party else name,
-        "total_balance": float(balances["net"]),
+        "total_balance": float(balances["balance"]),
         "balances": serialize_ledger_balances(balances),
         "summary": build_party_summary_for_period(ledger, opening_balances, balances),
+        "ledger_mode": mode,
+        "cutover_date": str(LEDGER_CUTOVER_DATE),
         "ledger": ledger
     }
 
@@ -4209,6 +4077,8 @@ def export_report(
     if report_type == "ledger":
         if not party or len(party.strip()) < 2:
             return {"error": "Party name is required for ledger report"}
+        if error := ledger_range_error(start, end):
+            return {"error": error}
 
         normalized = normalize_party_name(party)
         alias = db.query(models.PartyAlias).filter(
@@ -4230,11 +4100,28 @@ def export_report(
             scope
         )
 
-        opening_balances, balances, txns, ledger = build_party_ledger_window(db, query, start=start, end=end)
-        rows = [
-            {
+        opening_balances, balances, txns, ledger, mode = build_party_ledger_window(db, query, start=start, end=end)
+        if mode == ACCOUNT_LEDGER:
+            rows = [{
                 "Date": format_export_date(row["date"]),
-                "Account": row["account"].title(),
+                "Account": row.get("account", ""),
+                "Type": row["type"],
+                "Bill No": row.get("bill_number", ""),
+                "Details": ledger_row_details(row),
+                "Debit": row.get("debit", 0),
+                "Credit": row.get("credit", 0),
+                "Account Balance": row.get("account_balance", 0),
+                "Net": row.get("net_balance", 0),
+            } for row in ledger]
+            rows.append({
+                "Date": "", "Account": "", "Type": "Closing Balance", "Bill No": "",
+                "Details": "", "Debit": "", "Credit": "",
+                "Account Balance": "", "Net": float(balances["net"]),
+            })
+            columns = ["Date", "Account", "Type", "Bill No", "Details", "Debit", "Credit", "Account Balance", "Net"]
+        else:
+            rows = [{
+                "Date": format_export_date(row["date"]),
                 "Type": row["type"],
                 "Bill No": row.get("bill_number", ""),
                 "Category": row["category"],
@@ -4243,32 +4130,15 @@ def export_report(
                 "KGS": row.get("weight", 0),
                 "Rate": row.get("rate", 0),
                 "Mode": row["payment_mode"],
-                "Debit": row["debit"],
-                "Credit": row["credit"],
-                "Account Balance": row["account_balance"]
-            }
-            for row in ledger
-        ]
-        for account_name, closing_value in [
-            ("Receivable", balances["receivable"]),
-            ("Payable", balances["payable"]),
-            ("Net", balances["net"]),
-        ]:
+                "Amount": row["amount"],
+                "Balance": row["balance"]
+            } for row in ledger]
             rows.append({
-                "Date": "",
-                "Account": account_name,
-                "Type": "Closing Balance",
-                "Bill No": "",
-                "Category": "",
-                "Item": "",
-                "NAG": "",
-                "KGS": "",
-                "Rate": "",
-                "Mode": "",
-                "Debit": "",
-                "Credit": "",
-                "Account Balance": float(closing_value),
+                "Date": "", "Type": "Closing Balance", "Bill No": "", "Category": "",
+                "Item": "", "NAG": "", "KGS": "", "Rate": "", "Mode": "", "Amount": "",
+                "Balance": float(balances["balance"]),
             })
+            columns = ["Date", "Type", "Bill No", "Category", "Item", "NAG", "KGS", "Rate", "Mode", "Amount", "Balance"]
         period_label = "All Dates"
         if start and end:
             period_label = f"{format_export_date(start)} to {format_export_date(end)}"
@@ -4276,172 +4146,114 @@ def export_report(
             period_label = f"From {format_export_date(start)}"
         elif end:
             period_label = f"Up to {format_export_date(end)}"
-        columns = ["Date", "Account", "Type", "Bill No", "Category", "Item", "NAG", "KGS", "Rate", "Mode", "Debit", "Credit", "Account Balance"]
         filename = safe_filename(f"ledger_{party}")
-        meta_rows = [
-            f"Party: {party_row.name if party_row else party}",
-            f"Period: {period_label}",
+        balance_meta = [
             f"Opening Receivable: {float(opening_balances['receivable']):,.2f}",
             f"Opening Payable: {float(opening_balances['payable']):,.2f}",
             f"Closing Receivable: {float(balances['receivable']):,.2f}",
             f"Closing Payable: {float(balances['payable']):,.2f}",
-            f"Net Balance: {float(balances['net']):,.2f}",
+            f"Closing Net: {float(balances['net']):,.2f}",
+        ] if mode == ACCOUNT_LEDGER else [
+            f"Opening Balance: {float(opening_balances['balance']):,.2f}",
+            f"Closing Balance: {float(balances['balance']):,.2f}",
+        ]
+        meta_rows = [
+            f"Party: {party_row.name if party_row else party}",
+            f"Period: {period_label}",
+            f"Ledger method: {'Receivable / Payable' if mode == ACCOUNT_LEDGER else 'Restored historical balance'}",
+            *balance_meta,
         ]
         return report_response(rows, columns, filename, file_format, f"Ledger Report - {party}", meta_rows=meta_rows)
 
     if report_type == "summary":
-        query = apply_outlet_scope(db.query(models.Transaction), models.Transaction, scope)
-        if start:
-            query = query.filter(models.Transaction.date >= start)
-        if end:
-            query = query.filter(models.Transaction.date <= end)
-
-        txns = query.order_by(models.Transaction.date.asc()).all()
+        events = financial_events(db, scope, start, end)
         by_date = {}
-        for txn in txns:
-            key = str(txn.date)
-            by_date.setdefault(key, {
-                "Date": key,
-                "Sales": Decimal("0"),
-                "Purchase": Decimal("0"),
-                "Payment Received": Decimal("0"),
-                "Payment Paid": Decimal("0"),
-                "Opening": Decimal("0")
+        for event in events:
+            day = event["date"]
+            row = by_date.setdefault(day, {
+                "Sales": Decimal("0"), "Purchase": Decimal("0"),
+                "Payment Received": Decimal("0"), "Payment Paid": Decimal("0"), "Opening": Decimal("0"),
             })
-
-            amount = Decimal(txn.amount or 0)
-            if txn.type == "SALE":
-                by_date[key]["Sales"] += amount
-            elif txn.type == "PURCHASE":
-                by_date[key]["Purchase"] += amount
-            elif txn.type == "PAYMENT" and txn.category == "RECEIVED":
-                by_date[key]["Payment Received"] += amount
-            elif txn.type == "PAYMENT" and txn.category == "PAID":
-                by_date[key]["Payment Paid"] += amount
-            elif txn.type == "OPENING":
-                by_date[key]["Opening"] += amount
-
-        rows = []
-        for row in by_date.values():
-            sales = row["Sales"]
-            purchase = row["Purchase"]
-            rows.append({
-                "Date": row["Date"],
-                "Sales": float(sales),
-                "Purchase": float(purchase),
-                "Profit": float(sales - purchase),
-                "Payment Received": float(row["Payment Received"]),
-                "Payment Paid": float(row["Payment Paid"]),
-                "Opening": float(row["Opening"])
-            })
-
+            key = {"SALE": "Sales", "PURCHASE": "Purchase", "PAYMENT RECEIVED": "Payment Received",
+                   "PAYMENT PAID": "Payment Paid"}.get(event["type"])
+            if event["entry_type"] == "OPENING":
+                key = "Opening"
+            if key:
+                row[key] += Decimal(event["amount"])
+        histories = scoped_stock_histories(db, scope, end or max(by_date, default=pd.Timestamp.today().date()))
+        rows = [{
+            "Date": format_export_date(day),
+            **{key: float(value) for key, value in row.items()},
+            "Profit": optional_float(stock_total_for_day(histories, day, "gross_profit")),
+        } for day, row in sorted(by_date.items())]
         columns = ["Date", "Sales", "Purchase", "Profit", "Payment Received", "Payment Paid", "Opening"]
-        return report_response(rows, columns, "financial_summary", file_format, "Financial Summary")
+        return report_response(rows, columns, "financial_summary", file_format, "Financial Summary",
+                               meta_rows=["Profit is gross margin using purchase costs; blank means cost data is incomplete."])
 
     if report_type == "outstanding":
-        balance_query = db.query(
-            models.Party.name.label("party_name"),
-            models.Party.type.label("party_type"),
-            func.coalesce(func.sum(receivable_case()), 0).label("receivable"),
-            func.coalesce(func.sum(payable_case()), 0).label("payable"),
-        ).join(
-            models.Transaction,
-            models.Transaction.party_id == models.Party.id,
+        as_of = end or ledger_today()
+        mode = ledger_mode_for_date(as_of)
+        query = apply_outlet_scope(db.query(models.Transaction).filter(
+            models.Transaction.party_id.isnot(None)
+        ), models.Transaction, scope)
+        query = query.filter(models.Transaction.date <= as_of)
+        query = query.filter(
+            models.Transaction.date >= LEDGER_CUTOVER_DATE
+            if mode == ACCOUNT_LEDGER
+            else models.Transaction.date < LEDGER_CUTOVER_DATE
         )
-        balance_query = apply_outlet_scope(balance_query, models.Transaction, scope)
-        if end:
-            balance_query = balance_query.filter(models.Transaction.date <= end)
-
+        txns = query.order_by(models.Transaction.date, models.Transaction.created_at, models.Transaction.id).all()
+        grouped = {}
+        for txn in txns:
+            grouped.setdefault(txn.party_id, []).append(txn)
+        parties = db.query(models.Party).filter(models.Party.id.in_(list(grouped))).order_by(models.Party.name).all()
         rows = []
-        for result in balance_query.group_by(
-            models.Party.id,
-            models.Party.name,
-            models.Party.type,
-        ).order_by(models.Party.name.asc()).all():
-            receivable = Decimal(result.receivable or 0)
-            payable = Decimal(result.payable or 0)
-            if receivable == 0 and payable == 0:
-                continue
-            rows.append({
-                "Party": result.party_name,
-                "Type": result.party_type or "",
-                "Receivable": float(receivable),
-                "Payable": float(payable),
-                "Net Outstanding": float(receivable - payable),
-            })
+        for party_row in parties:
+            balances, _ = build_ledger(db, grouped[party_row.id], mode=mode, as_of=as_of)
+            if mode == ACCOUNT_LEDGER:
+                if not balances["receivable"] and not balances["payable"]:
+                    continue
+                rows.append({
+                    "Party": party_row.name,
+                    "Type": party_row.type or "",
+                    "Receivable": float(balances["receivable"]),
+                    "Payable": float(balances["payable"]),
+                    "Net Outstanding": float(balances["net"]),
+                })
+            else:
+                if not balances["balance"]:
+                    continue
+                rows.append({
+                    "Party": party_row.name,
+                    "Type": party_row.type or "",
+                    "Balance": float(balances["balance"]),
+                })
 
-        columns = ["Party", "Type", "Receivable", "Payable", "Net Outstanding"]
+        columns = ["Party", "Type", "Receivable", "Payable", "Net Outstanding"] if mode == ACCOUNT_LEDGER else ["Party", "Type", "Balance"]
         return report_response(rows, columns, "outstanding_balances", file_format, "Outstanding Balances")
 
     if report_type == "inventory":
         target = parse_input_date(date) if date else pd.Timestamp.today().date()
-        if date and not target:
+        if not target:
             return {"error": "Invalid date format"}
-
-        rows = []
-        items = stock_item_names_query(db, scope)
-
-        for item in sorted(items):
-            processed = apply_outlet_scope(
-                db.query(models.DailyItemStock).filter_by(date=target, item_type=item),
-                models.DailyItemStock,
-                scope
-            ).first()
-
-            if processed:
-                rows.append({
-                    "Date": str(processed.date),
-                    "Item": processed.item_type,
-                    "Opening Kg": float(processed.opening_weight or 0),
-                    "Purchase Kg": float(processed.purchase_weight or 0),
-                    "Sales Kg": float(processed.sales_weight or 0),
-                    "Expected Kg": float(processed.expected_closing_weight or 0),
-                    "Actual Kg": float(processed.actual_closing_weight or 0),
-                    "Leakage Kg": float(processed.leakage or 0)
-                })
-                continue
-
-            opening = apply_outlet_scope(
-                db.query(models.ItemOpeningStock).filter(
-                    models.ItemOpeningStock.item_type == item,
-                    models.ItemOpeningStock.date <= target
-                ),
-                models.ItemOpeningStock,
-                scope
-            ).order_by(models.ItemOpeningStock.date.desc()).first()
-
-            opening_date = opening.date if opening else None
-            opening_weight = Decimal(opening.opening_weight or 0) if opening else Decimal("0")
-            query = apply_outlet_scope(
-                db.query(models.Transaction).filter(
-                    models.Transaction.item_type == item,
-                    models.Transaction.date <= target
-                ),
-                models.Transaction,
-                scope
-            )
-
-            if opening_date:
-                query = query.filter(models.Transaction.date >= opening_date)
-
-            txns = query.all()
-            purchase_weight = sum(Decimal(t.weight or 0) for t in txns if t.type == "PURCHASE")
-            sales_weight = sum(Decimal(t.weight or 0) for t in txns if t.type == "SALE")
-            expected = opening_weight + purchase_weight - sales_weight
-
-            rows.append({
-                "Date": str(target),
-                "Item": item,
-                "Opening Kg": float(opening_weight),
-                "Purchase Kg": float(purchase_weight),
-                "Sales Kg": float(sales_weight),
-                "Expected Kg": float(expected),
-                "Actual Kg": "",
-                "Leakage Kg": ""
-            })
-
-        columns = ["Date", "Item", "Opening Kg", "Purchase Kg", "Sales Kg", "Expected Kg", "Actual Kg", "Leakage Kg"]
-        return report_response(rows, columns, f"inventory_{target}", file_format, f"Inventory Report - {target}")
+        snapshot = StockHistory(db, resolve_scope_outlet_id(scope), target).snapshot(target)
+        rows = [{
+            "Date": format_export_date(target), "Item": row["item"],
+            "Opening NAG": optional_float(row["opening_quantity"]),
+            "Opening Kg": optional_float(row["opening_weight"]),
+            "Purchase Kg": optional_float(row["purchase_weight"]),
+            "Sales Kg": optional_float(row["sales_weight"]),
+            "Live Cut Kg": optional_float(row["cut_weight"]),
+            "Mortality Kg": optional_float(row["mortality_weight"]),
+            "Expected Kg": optional_float(row["expected_closing_weight"]),
+            "Actual NAG": optional_float(row["actual_closing_quantity"]),
+            "Actual Kg": optional_float(row["actual_closing_weight"]),
+            "Leakage Kg": optional_float(row["leakage"]),
+        } for row in snapshot["rows"]]
+        columns = ["Date", "Item", "Opening NAG", "Opening Kg", "Purchase Kg", "Sales Kg", "Live Cut Kg", "Mortality Kg", "Expected Kg", "Actual NAG", "Actual Kg", "Leakage Kg"]
+        return report_response(rows, columns, f"inventory_{target}", file_format,
+                               f"Live Bird Inventory - {format_export_date(target)}",
+                               meta_rows=[snapshot["warning"]] if snapshot["warning"] else [])
 
     if report_type == "transactions":
         query = db.query(models.Transaction, models.Party).outerjoin(
@@ -4588,8 +4400,13 @@ def get_dashboard(date: str, db: Session = Depends(get_db), scope=Depends(get_ou
 
         sales = daily_totals.sales or 0
         purchase = daily_totals.purchase or 0
-        receivable = totals.receivable or 0
-        payable = totals.payable or 0
+        if ledger_mode_for_date(target_date) == ACCOUNT_LEDGER:
+            party_balances = party_account_balances_as_of(db, scope, target_date)
+            receivable = sum((balance["receivable"] for balance in party_balances.values()), Decimal("0"))
+            payable = sum((balance["payable"] for balance in party_balances.values()), Decimal("0"))
+        else:
+            receivable = totals.receivable or 0
+            payable = totals.payable or 0
         retail_sales = daily_operational.retail_sales or 0
         dressed_sales_amount = daily_operational.dressed_sales_amount or 0
         payments_received = daily_operational.payments_received or 0
@@ -4597,40 +4414,21 @@ def get_dashboard(date: str, db: Session = Depends(get_db), scope=Depends(get_ou
         mortality_weight = daily_operational.mortality_weight or 0
         mortality_quantity = daily_operational.mortality_quantity or 0
 
-        # --- Stock ---
-        stock = apply_outlet_scope(
-            db.query(
-                func.sum(models.DailyStock.expected_closing_weight).label("expected_closing_weight"),
-                func.sum(models.DailyStock.actual_closing_weight).label("actual_closing_weight"),
-                func.sum(models.DailyStock.leakage).label("leakage"),
-                func.count(models.DailyStock.id).label("row_count")
-            ).filter(models.DailyStock.date == target_date),
-            models.DailyStock,
-            scope
-        ).first()
-        processed_rows = apply_outlet_scope(
-            db.query(models.DailyItemStock).filter(models.DailyItemStock.date == target_date),
-            models.DailyItemStock,
-            scope
-        ).count()
-        has_daily_stock = bool(
-            stock
-            and (
-                (stock.row_count or 0) > 0
-                or stock.expected_closing_weight is not None
-                or stock.actual_closing_weight is not None
-                or stock.leakage is not None
-            )
+        histories = scoped_stock_histories(db, scope, target_date)
+        stock_totals = {
+            key: stock_total_for_day(histories, target_date, key)
+            for key in ("expected_closing_weight", "actual_closing_weight", "leakage", "gross_profit")
+        }
+        processed_rows = sum(
+            sum(1 for row in history.snapshot(target_date)["rows"] if row["actual_closing_weight"] is not None)
+            for history in histories
         )
-        is_processed = int(processed_rows or 0) > 0 or has_daily_stock
-        process_meta = (
-            f"{int(processed_rows or 0):,} item rows processed"
-            if int(processed_rows or 0) > 0
-            else ("Day processed" if has_daily_stock else "No item rows processed")
-        )
-
-        # --- Profit (simple approximation) ---
-        profit = float(sales or 0) - float(purchase or 0)
+        is_processed = stock_totals["actual_closing_weight"] is not None
+        process_meta = f"{processed_rows} hen types counted" if processed_rows else "Actual live count not entered"
+        profit = optional_float(stock_totals["gross_profit"])
+        events = financial_events(db, scope, target_date, target_date)
+        payments_received = sum(event["amount"] for event in events if event["type"] == "PAYMENT RECEIVED")
+        payments_paid = sum(event["amount"] for event in events if event["type"] == "PAYMENT PAID")
 
     except Exception as e:
         return {"error": "Dashboard calculation failed", "details": str(e)}
@@ -4642,9 +4440,9 @@ def get_dashboard(date: str, db: Session = Depends(get_db), scope=Depends(get_ou
         "sales": float(sales or 0),
         "profit": profit,
 
-        "expected_stock": float(stock.expected_closing_weight or 0) if stock else 0,
-        "actual_stock": float(stock.actual_closing_weight or 0) if stock else 0,
-        "leakage": float(stock.leakage or 0) if stock else 0,
+        "expected_stock": optional_float(stock_totals["expected_closing_weight"]),
+        "actual_stock": optional_float(stock_totals["actual_closing_weight"]),
+        "leakage": optional_float(stock_totals["leakage"]),
 
         "receivable": float(receivable),
         "payable": float(payable),
@@ -4668,6 +4466,21 @@ def top_debtors(start_date: str | None = None, end_date: str | None = None, db: 
     if (start_date and not start) or (end_date and not end):
         return {"error": "Invalid date format"}
 
+    as_of = end or ledger_today()
+    if ledger_mode_for_date(as_of) == ACCOUNT_LEDGER:
+        balances = party_account_balances_as_of(db, scope, as_of)
+        party_ids = list(balances)
+        parties = {
+            party.id: party.name
+            for party in db.query(models.Party).filter(models.Party.id.in_(party_ids)).all()
+        } if party_ids else {}
+        rows = sorted(
+            ((parties.get(party_id, str(party_id)), values["receivable"])
+             for party_id, values in balances.items() if values["receivable"] > 0),
+            key=lambda row: row[1], reverse=True,
+        )[:5]
+        return {"top_debtors": [{"party_name": name, "balance": float(balance)} for name, balance in rows]}
+
     balance_expr = func.sum(receivable_case())
     query = db.query(
         models.Party.name,
@@ -4678,10 +4491,9 @@ def top_debtors(start_date: str | None = None, end_date: str | None = None, db: 
     )
     query = apply_outlet_scope(query, models.Transaction, scope)
 
-    # Outstanding is a balance as at the end date. Filtering out transactions
-    # before the selected period would discard the opening balance.
-    if end:
-        query = query.filter(models.Transaction.date <= end)
+    # Outstanding is a balance as at the selected day. Future-dated cutover
+    # openings must not appear before 04/09/2026.
+    query = query.filter(models.Transaction.date <= as_of)
 
     rows = query.group_by(
         models.Party.id,
@@ -4702,6 +4514,21 @@ def top_debtors(start_date: str | None = None, end_date: str | None = None, db: 
 
 @app.get("/top-payables")
 def top_payables(db: Session = Depends(get_db), scope=Depends(get_outlet_scope)):
+    as_of = ledger_today()
+    if ledger_mode_for_date(as_of) == ACCOUNT_LEDGER:
+        balances = party_account_balances_as_of(db, scope, as_of)
+        party_ids = list(balances)
+        parties = {
+            party.id: party.name
+            for party in db.query(models.Party).filter(models.Party.id.in_(party_ids)).all()
+        } if party_ids else {}
+        rows = sorted(
+            ((parties.get(party_id, str(party_id)), values["payable"])
+             for party_id, values in balances.items() if values["payable"] > 0),
+            key=lambda row: row[1], reverse=True,
+        )[:5]
+        return {"top_payables": [{"party_name": name, "balance": float(balance)} for name, balance in rows]}
+
     balance_expr = func.sum(payable_case())
     rows = db.query(
         models.Party.name,
@@ -4710,7 +4537,9 @@ def top_payables(db: Session = Depends(get_db), scope=Depends(get_outlet_scope))
         models.Transaction,
         models.Transaction.party_id == models.Party.id
     )
-    rows = apply_outlet_scope(rows, models.Transaction, scope).group_by(
+    rows = apply_outlet_scope(rows, models.Transaction, scope).filter(
+        models.Transaction.date <= as_of
+    ).group_by(
         models.Party.id,
         models.Party.name
     ).having(
@@ -4784,6 +4613,7 @@ def get_trend(start_date: str, end_date: str, db: Session = Depends(get_db), sco
         for r in results
     }
 
+    histories = scoped_stock_histories(db, scope, end)
     trend = []
     for day in pd.date_range(start=start, end=end):
         current_date = day.date()
@@ -4792,7 +4622,7 @@ def get_trend(start_date: str, end_date: str, db: Session = Depends(get_db), sco
             "date": str(current_date),
             "sales": row["sales"],
             "purchase": row["purchase"],
-            "profit": row["sales"] - row["purchase"],
+            "profit": optional_float(stock_total_for_day(histories, current_date, "gross_profit")),
             "regular_billing": row["regular_billing"],
             "dressed_billing": row["dressed_billing"]
         })
@@ -4807,22 +4637,10 @@ def leakage_trend(start_date: str, end_date: str, db: Session = Depends(get_db),
     if not start or not end:
         return {"error": "Invalid date format"}
 
-    rows = apply_outlet_scope(
-        db.query(
-            models.DailyStock.date.label("date"),
-            func.sum(models.DailyStock.leakage).label("leakage")
-        ).filter(models.DailyStock.date.between(start, end)),
-        models.DailyStock,
-        scope
-    ).group_by(models.DailyStock.date).order_by(models.DailyStock.date).all()
-
-    return [
-        {
-            "date": str(r.date),
-            "leakage": float(r.leakage or 0)
-        }
-        for r in rows
-    ]
+    histories = scoped_stock_histories(db, scope, end)
+    days = sorted({row.date for history in histories for row in history.actual_rows if start <= row.date <= end})
+    return [{"date": str(day), "leakage": optional_float(stock_total_for_day(histories, day, "leakage"))}
+            for day in days]
 
 
 @app.get("/analytics/summary")
@@ -4870,22 +4688,22 @@ def analytics_summary(start_date: str, end_date: str, db: Session = Depends(get_
 
     sales = Decimal(totals.sales or 0)
     purchase = Decimal(totals.purchase or 0)
-    received = Decimal(totals.received or 0)
-    paid = Decimal(totals.paid or 0)
-    leakage = apply_outlet_scope(
-        db.query(func.sum(models.DailyItemStock.leakage)).filter(models.DailyItemStock.date.between(start, end)),
-        models.DailyItemStock,
-        scope
-    ).scalar() or 0
+    events = financial_events(db, scope, start, end)
+    received = sum((event["amount"] for event in events if event["type"] == "PAYMENT RECEIVED"), Decimal("0"))
+    paid = sum((event["amount"] for event in events if event["type"] == "PAYMENT PAID"), Decimal("0"))
+    histories = scoped_stock_histories(db, scope, end)
+    days = [day.date() for day in pd.date_range(start, end)]
+    leakage = complete_sum(stock_total_for_day(histories, day, "leakage") for day in days)
+    profit = complete_sum(stock_total_for_day(histories, day, "gross_profit") for day in days)
 
     return {
         "sales": float(sales),
         "purchase": float(purchase),
-        "profit": float(sales - purchase),
+        "profit": optional_float(profit),
         "received": float(received),
         "paid": float(paid),
         "net_cash": float(received - paid),
-        "leakage": float(leakage)
+        "leakage": optional_float(leakage)
     }
 
 
@@ -5145,16 +4963,16 @@ def create_dressed_stock_entries(payload: dict = Body(...), input_date: str = No
 
     for index, row in enumerate(rows, start=1):
         try:
-            item_name = str(row.get("item_name") or row.get("hen_type") or "").strip() or "Dressed Chicken"
+            item_name = normalize_source(row.get("source_item_type") or row.get("item_name") or row.get("hen_type"))
             live_quantity = parse_decimal(row.get("live_quantity", row.get("nag")))
             live_weight = parse_decimal(row.get("live_weight"))
             dressed_weight = parse_decimal(row.get("dressed_weight"))
             default_rate = parse_decimal(row.get("default_rate"))
             notes = str(row.get("notes") or "").strip() or None
 
-            if live_quantity < 0 or live_weight < 0 or dressed_weight < 0 or default_rate < 0:
+            if item_name not in SOURCE_ITEMS or not all(value.is_finite() for value in (live_quantity, live_weight, dressed_weight, default_rate)) or live_quantity <= 0 or live_quantity != live_quantity.to_integral_value() or live_weight <= 0 or dressed_weight < 0 or dressed_weight > live_weight or default_rate < 0:
                 skipped += 1
-                row_error(errors, index, "Enter valid live NAG and live weight")
+                row_error(errors, index, "Select BB, CB, COCREL, LEGOAN or DP and enter live NAG and kg; dressed kg cannot exceed live kg")
                 continue
 
             db.add(models.DressedStockEntry(
@@ -5172,6 +4990,10 @@ def create_dressed_stock_entries(payload: dict = Body(...), input_date: str = No
         except Exception as e:
             skipped += 1
             row_error(errors, index, str(e))
+
+    if errors:
+        db.rollback()
+        return {"error": "Correct the dressed cutting rows before saving", "details": errors}
 
     try:
         db.commit()
@@ -5975,72 +5797,17 @@ def daily_sheet(
             "totals": sheet_data["totals"]
         }
 
-    rates = latest_item_rates(db, target_date, scope)
-
-    processed_rows = apply_outlet_scope(
-        db.query(models.DailyItemStock).filter(
-            models.DailyItemStock.date == target_date,
-            models.DailyItemStock.item_type.in_(PROCESS_DAY_SOURCE_ITEMS)
-        ),
-        models.DailyItemStock,
-        scope
-    ).all()
-    processed_by_item = {row.item_type: row for row in processed_rows}
-
-    tracked_items = list(PROCESS_DAY_SOURCE_ITEMS)
-    opening_source = {}
-    previous_date = target_date - timedelta(days=1)
-
-    # First choice: exact previous day's actual closing from Process Day.
-    previous_day_rows = apply_outlet_scope(
-        db.query(models.DailyItemStock).filter(
-            models.DailyItemStock.date == previous_date,
-            models.DailyItemStock.item_type.in_(PROCESS_DAY_SOURCE_ITEMS)
-        ),
-        models.DailyItemStock,
-        scope
-    ).all()
-    for row in previous_day_rows:
-        opening_source[row.item_type] = {
-            "nag": Decimal(row.actual_closing_quantity or 0) if row.actual_closing_quantity is not None else None,
-            "weight": Decimal(row.actual_closing_weight or 0)
-        }
-
-    # If the day itself is already processed, keep its stored opening only for
-    # rendering that processed day back again. This should match the previous
-    # day's actual closing that was used during Process Day.
-    for row in processed_rows:
-        opening_source.setdefault(row.item_type, {
-            "nag": Decimal(row.opening_quantity or 0) if row.opening_quantity is not None else None,
-            "weight": Decimal(row.opening_weight or 0)
-        })
-
-    stock_warning = None
-    if not processed_rows:
-        if not previous_day_rows:
-            stock_warning = f"Process Day for {previous_date.strftime('%d/%m/%Y')} is not filled yet."
-        else:
-            missing_previous_day_items = [item for item in tracked_items if item not in opening_source]
-            if missing_previous_day_items:
-                stock_warning = (
-                    "Previous day Process Day is incomplete. Missing: "
-                    + ", ".join(missing_previous_day_items[:8])
-                )
-
-    opening_rows = []
-    opening_total_quantity = None
-    opening_total_weight = Decimal("0")
-    opening_total_amount = Decimal("0")
-    for item, values in sorted(opening_source.items()):
-        nag = values["nag"]
-        weight = values["weight"]
-        rate = rates.get(item, Decimal("0"))
-        amount = weight * rate
-        opening_rows.append(format_sheet_row(item, weight, rate, amount, nag))
-        if nag is not None:
-            opening_total_quantity = Decimal(opening_total_quantity or 0) + nag
-        opening_total_weight += weight
-        opening_total_amount += amount
+    stock = StockHistory(db, resolve_scope_outlet_id(scope), target_date).snapshot(target_date)
+    stock_totals = stock["totals"]
+    stock_warning = stock["warning"]
+    opening_total_quantity = stock_totals["opening_quantity"]
+    opening_total_weight = stock_totals["opening_weight"]
+    opening_total_amount = stock_totals["opening_amount"]
+    opening_rows = [
+        format_sheet_row(row["item"], row["opening_weight"], row["opening_rate"],
+                         row["opening_amount"], row["opening_quantity"])
+        for row in stock["rows"]
+    ]
 
     purchase_rows_raw = apply_outlet_scope(
         db.query(models.Transaction).filter(
@@ -6191,27 +5958,17 @@ def daily_sheet(
 
     total_purchase_rate = (purchase_total_amount / purchase_total_weight) if purchase_total_weight > 0 else Decimal("0")
 
-    closing_quantity = None
-    if any(value is not None for value in [opening_total_quantity, purchase_total_quantity, total_sales_quantity, mortality_total_quantity]):
-        closing_quantity = (
-            Decimal(opening_total_quantity or 0)
-            + Decimal(purchase_total_quantity or 0)
-            - Decimal(total_sales_quantity or 0)
-            - Decimal(mortality_total_quantity or 0)
-        )
-
-    closing_weight = opening_total_weight + purchase_total_weight - total_sales_weight - mortality_total_weight
-    closing_rate = total_purchase_rate if total_purchase_rate > 0 else Decimal("0")
-    closing_amount = closing_weight * closing_rate
-
-    actual_quantity = optional_decimal_sum(Decimal(row.actual_closing_quantity or 0) for row in processed_rows if row.actual_closing_quantity is not None) if processed_rows else None
-    actual_weight = sum(Decimal(row.actual_closing_weight or 0) for row in processed_rows) if processed_rows else Decimal("0")
-    actual_amount = actual_weight * closing_rate
-    short_quantity = Decimal(closing_quantity or 0) - Decimal(actual_quantity or 0) if (closing_quantity is not None or actual_quantity is not None) else None
-    short_weight = closing_weight - actual_weight
-    short_amount = short_weight * closing_rate
-
-    gross_profit = total_sales_amount - purchase_total_amount + closing_amount - opening_total_amount
+    closing_quantity = stock_totals["expected_closing_quantity"]
+    closing_weight = stock_totals["expected_closing_weight"]
+    closing_amount = stock_totals["closing_amount"]
+    closing_rate = (closing_amount / closing_weight) if closing_weight and closing_amount is not None else None
+    actual_quantity = stock_totals["actual_closing_quantity"]
+    actual_weight = stock_totals["actual_closing_weight"]
+    actual_amount = stock_totals["actual_amount"]
+    short_quantity = stock_totals["quantity_leakage"]
+    short_weight = stock_totals["leakage"]
+    short_amount = stock_totals["short_amount"]
+    gross_profit = stock_totals["gross_profit"]
 
     retail_credit_bills = apply_outlet_scope(
         db.query(models.RetailBill).filter(
@@ -6246,7 +6003,6 @@ def daily_sheet(
         retail_credit_outstanding += bill_outstanding
 
     purchase_rate_rows = []
-    purchase_by_item = {}
     purchase_rate_query = db.query(
         models.Transaction.item_type.label("item_type"),
         func.sum(models.Transaction.weight).label("weight"),
@@ -6268,11 +6024,6 @@ def daily_sheet(
         purchase_rate_rows.append(
             format_rate_analysis_row(row.item_type, avg_rate, weight, amount)
         )
-        purchase_by_item[row.item_type] = {
-            "weight": weight,
-            "amount": amount,
-            "avg_rate": avg_rate
-        }
 
     category_rate_rows = []
     category_mix_rows = []
@@ -6339,50 +6090,22 @@ def daily_sheet(
             )
         )
 
-    sales_by_item_rows = db.query(
-        models.Transaction.item_type.label("item_type"),
-        func.sum(models.Transaction.weight).label("weight"),
-        func.sum(models.Transaction.amount).label("amount")
-    ).filter(
-        models.Transaction.date == target_date,
-        models.Transaction.type == "SALE",
-        models.Transaction.item_type.isnot(None),
-        outlet_scope_filter(models.Transaction, scope)
-    ).group_by(
-        models.Transaction.item_type
-    ).order_by(
-        models.Transaction.item_type.asc()
-    ).all()
-
-    sales_by_item = {}
-    for row in sales_by_item_rows:
-        weight = Decimal(row.weight or 0)
-        amount = Decimal(row.amount or 0)
-        sales_by_item[row.item_type] = {
-            "weight": weight,
-            "amount": amount,
-            "avg_rate": decimal_ratio(amount, weight)
-        }
-
     item_performance_rows = []
-    for item in sorted(set(purchase_by_item.keys()) | set(sales_by_item.keys())):
-        purchase_info = purchase_by_item.get(item, {"weight": Decimal("0"), "amount": Decimal("0"), "avg_rate": Decimal("0")})
-        sales_info = sales_by_item.get(item, {"weight": Decimal("0"), "amount": Decimal("0"), "avg_rate": Decimal("0")})
-        spread = sales_info["avg_rate"] - purchase_info["avg_rate"]
-        comparable_weight = sales_info["weight"] if sales_info["weight"] > 0 else Decimal("0")
-        estimated_profit = spread * comparable_weight
-        item_performance_rows.append(format_performance_row(
-            item,
-            purchase_info["weight"],
-            sales_info["weight"],
-            purchase_info["avg_rate"],
-            sales_info["avg_rate"],
-            spread,
-            estimated_profit
-        ))
+    for row in stock["rows"]:
+        sold = row["sales_weight"] + row["dressed_sales_weight"]
+        revenue = row["sales_amount"] + row["dressed_sales_amount"]
+        sale_rate = revenue / sold if sold > 0 else None
+        spread = sale_rate - row["rate"] if sale_rate is not None and row["rate"] is not None and not row["dressed_sales_weight"] else None
+        if row["purchase_weight"] or sold:
+            item_performance_rows.append({
+                "item": row["item"], "purchase_kg": float(row["purchase_weight"]),
+                "sales_kg": float(sold), "buy_rate": optional_float(row["rate"]),
+                "sell_rate": optional_float(sale_rate), "spread": optional_float(spread),
+                "gross_profit": optional_float(row["gross_profit"]),
+            })
 
-    total_purchase_rate_value = decimal_ratio(purchase_total_amount, purchase_total_weight)
-    total_sales_rate_value = decimal_ratio(total_sales_amount, total_sales_weight)
+    total_purchase_rate_value = decimal_ratio(purchase_total_amount, purchase_total_weight) if purchase_total_weight > 0 else None
+    total_sales_rate_value = decimal_ratio(total_sales_amount, total_sales_weight) if total_sales_weight > 0 else None
     dressed_sales_weight = sum(Decimal(str(row["total"]["weight"])) for row in ordered_sales_sections if row["title"].upper() == "RETAIL DRESSED")
     dressed_sales_amount = sum(Decimal(str(row["total"]["total"])) for row in ordered_sales_sections if row["title"].upper() == "RETAIL DRESSED")
     dressed_live_cut_weight = Decimal(
@@ -6405,21 +6128,28 @@ def daily_sheet(
     )
     dressed_avg_on_live_weight = decimal_ratio(dressed_sales_amount, dressed_live_cut_weight) if dressed_live_cut_weight > 0 else None
     dressed_yield_percent = (dressed_yield_weight / dressed_live_cut_weight * Decimal("100")) if dressed_live_cut_weight > 0 else None
-    sell_through = (total_sales_weight / (opening_total_weight + purchase_total_weight) * Decimal("100")) if (opening_total_weight + purchase_total_weight) > 0 else Decimal("0")
-    leakage_percent = (short_weight / closing_weight * Decimal("100")) if closing_weight > 0 and short_weight >= 0 else None
-    realized_spread = total_sales_rate_value - total_purchase_rate_value
+    available_live = complete_sum([opening_total_weight, stock_totals["purchase_weight"]])
+    live_sales_weight = stock_totals["sales_weight"]
+    live_sales_quantity = stock_totals["sales_quantity"]
+    live_sales_amount = stock_totals["sales_amount"]
+    live_cut_weight = stock_totals["cut_weight"]
+    live_cut_quantity = stock_totals["cut_quantity"]
+    sell_through = live_sales_weight / available_live * Decimal("100") if available_live and available_live > 0 else None
+    leakage_percent = short_weight / closing_weight * Decimal("100") if short_weight is not None and closing_weight is not None and closing_weight > 0 else None
+    realized_spread = total_sales_rate_value - total_purchase_rate_value if total_sales_rate_value is not None and total_purchase_rate_value is not None and not dressed_sales_weight else None
     retail_total_amount = sum(Decimal(str(section["total"]["total"])) for section in ordered_sales_sections if section["title"].upper() in ["RETAIL", "RETAIL DRESSED"])
     retail_mix_percent = (retail_total_amount / total_sales_amount * Decimal("100")) if total_sales_amount > 0 else Decimal("0")
-    stock_coverage_days = (closing_weight / total_sales_weight) if total_sales_weight > 0 and closing_weight >= 0 else None
-    stock_math_invalid = closing_weight < 0
+    stock_coverage_days = closing_weight / live_sales_weight if live_sales_weight > 0 and closing_weight is not None and closing_weight >= 0 else None
+    stock_math_invalid = closing_weight is None or closing_weight < 0
     missing_dressed_live_cut = dressed_sales_weight > 0 and dressed_live_cut_weight <= 0
+    profit_percent = gross_profit / total_sales_amount * Decimal("100") if gross_profit is not None and total_sales_amount > 0 else (Decimal("0") if gross_profit == 0 else None)
 
     return {
         "date": str(target_date),
         "stock_warning": stock_warning,
         "opening_stock": {
             "rows": opening_rows,
-            "total": format_sheet_row("TOTAL", opening_total_weight, (opening_total_amount / opening_total_weight) if opening_total_weight > 0 else Decimal("0"), opening_total_amount, opening_total_quantity)
+            "total": format_sheet_row("TOTAL", opening_total_weight, (opening_total_amount / opening_total_weight) if opening_total_weight and opening_total_amount is not None else None, opening_total_amount, opening_total_quantity)
         },
         "purchase_stock": {
             "rows": purchase_rows,
@@ -6438,13 +6168,14 @@ def daily_sheet(
             "total_purchases": format_sheet_row("TOTAL PURCHASES", purchase_total_weight, total_purchase_rate, purchase_total_amount, purchase_total_quantity),
             "transport_mortality": format_sheet_row("TRANSPORTATION MORTALITY", transport_mortality_total_weight, Decimal("0"), Decimal("0"), transport_mortality_total_quantity),
             "shop_mortality": format_sheet_row("SHOP MORTALITY", shop_mortality_total_weight, Decimal("0"), Decimal("0"), shop_mortality_total_quantity),
-            "sales": format_sheet_row("SALES", total_sales_weight, total_sales_rate, total_sales_amount, total_sales_quantity),
+            "sales": format_sheet_row("LIVE BIRD SALES", live_sales_weight, decimal_ratio(live_sales_amount, live_sales_weight), live_sales_amount, live_sales_quantity),
+            "live_cut": format_sheet_row("LIVE BIRDS TAKEN FOR DRESSING", live_cut_weight, None, None, live_cut_quantity),
             "closing_stock": format_sheet_row("CLOSING STOCK", closing_weight, closing_rate, closing_amount, closing_quantity),
             "actual_stock": format_sheet_row("ACTUAL STOCK", actual_weight, closing_rate, actual_amount, actual_quantity),
             "short_by": format_sheet_row("SHORT BY", short_weight, closing_rate, short_amount, short_quantity),
             "gross_profit": {
-                "rate": float((gross_profit / total_sales_amount * Decimal("100")) if total_sales_amount > 0 else Decimal("0")),
-                "total": float(gross_profit)
+                "rate": optional_float(profit_percent),
+                "total": optional_float(gross_profit)
             }
         },
         "retail_credit_sheet": {
@@ -6457,7 +6188,9 @@ def daily_sheet(
             }
         },
         "meta": {
-            "nag_available": any(value is not None for value in [opening_total_quantity, purchase_total_quantity, total_sales_quantity, actual_quantity])
+            "nag_available": any(value is not None for value in [opening_total_quantity, purchase_total_quantity, total_sales_quantity, actual_quantity]),
+            "actual_entered": actual_weight is not None,
+            "stock_basis": "LIVE BIRDS"
         },
         "rate_analysis": {
             "purchase_by_hen_type": purchase_rate_rows,
@@ -6471,7 +6204,8 @@ def daily_sheet(
         "metric_cards": [
             {
                 "label": "Opening Stock",
-                "value": float(opening_total_weight),
+                "value": optional_float(opening_total_weight),
+                "display_value": "Not entered" if opening_total_weight is None else None,
                 "suffix": " kg",
                 "subvalue": opening_total_quantity is not None and f"{float(opening_total_quantity):.0f} NAG" or None
             },
@@ -6482,10 +6216,17 @@ def daily_sheet(
                 "subvalue": purchase_total_quantity is not None and f"{float(purchase_total_quantity):.0f} NAG" or None
             },
             {
-                "label": "Sales",
-                "value": float(total_sales_weight),
+                "label": "Live Sales",
+                "value": float(live_sales_weight),
                 "suffix": " kg",
-                "subvalue": total_sales_quantity is not None and f"{float(total_sales_quantity):.0f} NAG" or None
+                "subvalue": live_sales_quantity is not None and f"{float(live_sales_quantity):.0f} NAG" or None
+            },
+            {
+                "label": "Live Birds Taken for Dressing",
+                "value": optional_float(live_cut_weight),
+                "display_value": "Not entered" if live_cut_weight is None else None,
+                "suffix": " kg",
+                "subvalue": f"{float(live_cut_quantity):.0f} NAG" if live_cut_quantity is not None else "NAG not entered"
             },
             {
                 "label": "Transport Mortality",
@@ -6501,30 +6242,35 @@ def daily_sheet(
             },
             {
                 "label": "Expected Closing",
-                "value": float(closing_weight),
+                "value": optional_float(closing_weight),
+                "display_value": "N/A" if closing_weight is None else None,
                 "suffix": " kg",
-                "subvalue": "Sales exceed available stock" if stock_math_invalid else (closing_quantity is not None and f"{float(closing_quantity):.0f} NAG" or None)
+                "subvalue": "Live stock cannot be reconciled" if stock_math_invalid else (closing_quantity is not None and f"{float(closing_quantity):.0f} NAG" or None)
             },
             {
                 "label": "Actual Stock",
-                "value": float(actual_weight),
+                "value": optional_float(actual_weight),
+                "display_value": "Not entered" if actual_weight is None else None,
                 "suffix": " kg",
                 "subvalue": actual_quantity is not None and f"{float(actual_quantity):.0f} NAG" or None
             },
             {
                 "label": "Short By",
-                "value": float(short_weight),
+                "value": optional_float(short_weight),
+                "display_value": "N/A" if short_weight is None else None,
                 "suffix": " kg",
                 "subvalue": "Invalid until stock source is corrected" if stock_math_invalid else (short_quantity is not None and f"{float(short_quantity):.0f} NAG" or None)
             },
             {
                 "label": "Avg Buy Rate",
-                "value": float(total_purchase_rate_value),
+                "value": optional_float(total_purchase_rate_value),
+                "display_value": "N/A" if total_purchase_rate_value is None else None,
                 "suffix": "/kg"
             },
             {
                 "label": "Avg Sale Rate",
-                "value": float(total_sales_rate_value),
+                "value": optional_float(total_sales_rate_value),
+                "display_value": "N/A" if total_sales_rate_value is None else None,
                 "suffix": "/kg"
             },
             {
@@ -6532,16 +6278,18 @@ def daily_sheet(
                 "value": float(leakage_percent) if leakage_percent is not None else None,
                 "suffix": "%",
                 "display_value": "N/A" if leakage_percent is None else None,
-                "subvalue": stock_math_invalid and "Expected closing is negative" or None
+                "subvalue": "Live stock cannot be reconciled" if stock_math_invalid else None
             },
             {
                 "label": "Sell Through",
-                "value": float(sell_through),
+                "value": optional_float(sell_through),
+                "display_value": "N/A" if sell_through is None else None,
                 "suffix": "%"
             },
             {
                 "label": "Sale-Buy Spread",
-                "value": float(realized_spread),
+                "value": optional_float(realized_spread),
+                "display_value": "N/A" if realized_spread is None else None,
                 "suffix": "/kg"
             },
             {
@@ -6572,13 +6320,14 @@ def daily_sheet(
                 "value": float(stock_coverage_days) if stock_coverage_days is not None else None,
                 "suffix": " days",
                 "display_value": "N/A" if stock_coverage_days is None else None,
-                "subvalue": stock_math_invalid and "Closing stock is negative" or None
+                "subvalue": "Live stock cannot be reconciled" if stock_math_invalid else None
             },
             {
                 "label": "Gross Profit",
-                "value": float((gross_profit / total_sales_amount * Decimal('100')) if total_sales_amount > 0 else Decimal('0')),
+                "value": optional_float(profit_percent),
+                "display_value": "N/A" if gross_profit is None else None,
                 "suffix": "%",
-                "subvalue": f"Rs {float(gross_profit):,.2f}"
+                "subvalue": f"Rs {float(gross_profit):,.2f}" if gross_profit is not None else "Cost unavailable"
             }
         ],
         "special_sections": {
@@ -6624,88 +6373,19 @@ def inventory_by_item(date: str, db: Session = Depends(get_db), scope=Depends(ge
     if not target_date:
         return {"error": "Invalid date format"}
 
-    items = stock_item_names_query(db, scope)
-
-    result = []
-    processed_by_item = {
-        row.item_type: row
-        for row in apply_outlet_scope(
-            db.query(models.DailyItemStock).filter(models.DailyItemStock.date == target_date),
-            models.DailyItemStock,
-            scope
-        ).all()
+    snapshot = StockHistory(db, resolve_scope_outlet_id(scope), target_date).snapshot(target_date)
+    return {
+        "warning": snapshot["warning"],
+        "inventory": [{
+            "item": row["item"], "opening_date": str(target_date),
+            **{key: optional_float(row[key]) for key in (
+                "opening_weight", "purchase_weight", "sales_weight",
+                "expected_closing_weight", "actual_closing_weight", "leakage",
+                "cut_weight", "mortality_weight",
+            )},
+            "closing_weight": optional_float(row["actual_closing_weight"]),
+        } for row in snapshot["rows"]],
     }
-
-    openings_by_item = {}
-    openings = apply_outlet_scope(
-        db.query(models.ItemOpeningStock).filter(models.ItemOpeningStock.date <= target_date),
-        models.ItemOpeningStock,
-        scope
-    ).order_by(
-        models.ItemOpeningStock.item_type.asc(),
-        models.ItemOpeningStock.date.desc()
-    ).all()
-
-    for opening in openings:
-        openings_by_item.setdefault(opening.item_type, opening)
-
-    txns_by_item = {}
-    txns = apply_outlet_scope(
-        db.query(models.Transaction).filter(
-            models.Transaction.date <= target_date,
-            models.Transaction.item_type.isnot(None),
-            models.Transaction.type.in_(["PURCHASE", "SALE"])
-        ),
-        models.Transaction,
-        scope
-    ).all()
-
-    for txn in txns:
-        txns_by_item.setdefault(txn.item_type, []).append(txn)
-
-    for item in sorted(items):
-        processed = processed_by_item.get(item)
-
-        if processed:
-            result.append({
-                "item": item,
-                "opening_date": str(target_date),
-                "opening_weight": float(processed.opening_weight or 0),
-                "purchase_weight": float(processed.purchase_weight or 0),
-                "sales_weight": float(processed.sales_weight or 0),
-                "expected_closing_weight": float(processed.expected_closing_weight or 0),
-                "actual_closing_weight": float(processed.actual_closing_weight or 0),
-                "leakage": float(processed.leakage or 0),
-                "closing_weight": float(processed.actual_closing_weight or 0)
-            })
-            continue
-
-        opening = openings_by_item.get(item)
-
-        opening_date = opening.date if opening else None
-        opening_weight = Decimal(opening.opening_weight or 0) if opening else Decimal("0")
-
-        item_txns = txns_by_item.get(item, [])
-        if opening_date:
-            item_txns = [txn for txn in item_txns if txn.date >= opening_date]
-
-        purchase_weight = sum(Decimal(t.weight or 0) for t in item_txns if t.type == "PURCHASE")
-        sales_weight = sum(Decimal(t.weight or 0) for t in item_txns if t.type == "SALE")
-        closing_weight = opening_weight + purchase_weight - sales_weight
-
-        result.append({
-            "item": item,
-            "opening_date": str(opening_date) if opening_date else None,
-            "opening_weight": float(opening_weight),
-            "purchase_weight": float(purchase_weight),
-            "sales_weight": float(sales_weight),
-            "expected_closing_weight": float(closing_weight),
-            "actual_closing_weight": None,
-            "leakage": None,
-            "closing_weight": float(closing_weight)
-        })
-
-    return {"inventory": result}
 
 
 @app.get("/items/search")
@@ -6736,39 +6416,18 @@ def profit_by_item(start_date: str, end_date: str, db: Session = Depends(get_db)
     if not start or not end:
         return {"error": "Invalid date format"}
 
-    rows = db.query(
-        models.Transaction.item_type.label("item"),
-        func.sum(
-            case(
-                (models.Transaction.type == "SALE", models.Transaction.amount),
-                else_=0
-            )
-        ).label("sales"),
-        func.sum(
-            case(
-                (models.Transaction.type == "PURCHASE", models.Transaction.amount),
-                else_=0
-            )
-        ).label("purchase")
-    ).filter(
-        models.Transaction.date.between(start, end),
-        models.Transaction.item_type.isnot(None),
-        outlet_scope_filter(models.Transaction, scope)
-    ).group_by(
-        models.Transaction.item_type
-    ).order_by(
-        models.Transaction.item_type.asc()
-    ).all()
-
-    return [
-        {
-            "item": row.item,
-            "sales": float(row.sales or 0),
-            "purchase": float(row.purchase or 0),
-            "profit": float((row.sales or 0) - (row.purchase or 0))
-        }
-        for row in rows
-    ]
+    histories = scoped_stock_histories(db, scope, end)
+    grouped = {item: [] for item in SOURCE_ITEMS}
+    for day in pd.date_range(start, end):
+        for history in histories:
+            for row in history.snapshot(day.date())["rows"]:
+                grouped[row["item"]].append(row)
+    return [{
+        "item": item,
+        "sales": float(sum((row["sales_amount"] + row["dressed_sales_amount"] for row in rows), Decimal("0"))),
+        "purchase": float(sum((row["purchase_amount"] for row in rows), Decimal("0"))),
+        "profit": optional_float(complete_sum(row["gross_profit"] for row in rows)),
+    } for item, rows in grouped.items() if any(row["sales_amount"] or row["dressed_sales_amount"] or row["purchase_amount"] for row in rows)]
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=10000)

@@ -43,7 +43,8 @@ async function searchLedger() {
     const summary = document.getElementById("partySummary");
 
     // --- Loading state
-    body.innerHTML = `<tr><td colspan="9" class="empty">Loading...</td></tr>`;
+    setLedgerMode("legacy");
+    body.innerHTML = `<tr><td colspan="6" class="empty">Loading...</td></tr>`;
     total.innerText = "₹ 0";
     if (receivable) receivable.innerText = "₹ 0";
     if (payable) payable.innerText = "₹ 0";
@@ -57,7 +58,7 @@ async function searchLedger() {
       const data = await apiCall(`/party/ledger?${params.toString()}`);
 
       if (data.error) {
-        body.innerHTML = `<tr><td colspan="9" class="empty"></td></tr>`;
+        body.innerHTML = `<tr><td colspan="6" class="empty"></td></tr>`;
         body.querySelector("td").innerText = data.error;
         showToast(data.error);
         return;
@@ -66,19 +67,23 @@ async function searchLedger() {
       // --- Multiple matches case
       if (data.multiple_matches) {
         const names = data.results.map(p => p.name).join(", ");
-        body.innerHTML = `<tr><td colspan="9" class="empty"></td></tr>`;
+        body.innerHTML = `<tr><td colspan="6" class="empty"></td></tr>`;
         body.querySelector("td").innerText = `Multiple matches found:\n${names}`;
         return;
       }
 
+      const accountMode = data.ledger_mode === "account";
+      setLedgerMode(data.ledger_mode);
+
       // --- No data
       if (!data.ledger || data.ledger.length === 0) {
         const partyLabel = data.party_name || name;
-        body.innerHTML = `<tr><td colspan="9" class="empty">${partyLabel} has no transactions in the selected period</td></tr>`;
+        body.innerHTML = `<tr><td colspan="${accountMode ? 9 : 6}" class="empty"></td></tr>`;
+        body.querySelector("td").innerText = `${partyLabel} has no transactions in the selected period`;
         total.innerText = formatMoney(data.total_balance || 0);
         if (receivable) receivable.innerText = formatMoney(data.balances?.receivable || 0);
         if (payable) payable.innerText = formatMoney(data.balances?.payable || 0);
-        renderPartySummary(data.summary ? { summary: data.summary } : null);
+        renderPartySummary(data.summary ? { summary: data.summary, ledger_mode: data.ledger_mode } : null);
         return;
       }
 
@@ -86,7 +91,7 @@ async function searchLedger() {
       total.innerText = formatMoney(data.total_balance);
       if (receivable) receivable.innerText = formatMoney(data.balances?.receivable || 0);
       if (payable) payable.innerText = formatMoney(data.balances?.payable || 0);
-      renderPartySummary(data.summary ? { summary: data.summary } : null);
+      renderPartySummary(data.summary ? { summary: data.summary, ledger_mode: data.ledger_mode } : null);
 
       // --- Populate table
       body.innerHTML = "";
@@ -103,21 +108,29 @@ async function searchLedger() {
         ].filter(Boolean);
 
         appendCell(tr, formatLedgerDate(row.date));
-        appendCell(tr, formatLedgerAccount(row.account));
-        appendCell(tr, row.type);
-        appendCell(tr, row.bill_number || "-");
-        appendCell(tr, detailParts.join(" · ") || "-");
-        appendCell(tr, row.debit ? formatMoney(row.debit) : "-", row.debit ? "debit" : "");
-        appendCell(tr, row.credit ? formatMoney(row.credit) : "-", row.credit ? "credit" : "");
-        appendCell(tr, formatMoney(row.account_balance));
-        appendCell(tr, formatMoney(row.net_balance));
+        if (accountMode) {
+          appendCell(tr, formatLedgerAccount(row.account));
+          appendCell(tr, row.type);
+          appendCell(tr, row.bill_number || "-");
+          appendCell(tr, detailParts.join(" · ") || "-");
+          appendCell(tr, row.debit ? formatMoney(row.debit) : "-", row.debit ? "debit" : "");
+          appendCell(tr, row.credit ? formatMoney(row.credit) : "-", row.credit ? "credit" : "");
+          appendCell(tr, formatMoney(row.account_balance));
+          appendCell(tr, formatMoney(row.net_balance));
+        } else {
+          appendCell(tr, row.type);
+          appendCell(tr, row.bill_number || "-");
+          appendCell(tr, detailParts.join(" · ") || "-");
+          appendCell(tr, formatMoney(row.amount));
+          appendCell(tr, formatMoney(row.balance));
+        }
 
         body.appendChild(tr);
       });
 
     } catch (e) {
       console.error(e);
-      body.innerHTML = `<tr><td colspan="9" class="empty">Error loading data</td></tr>`;
+      body.innerHTML = `<tr><td colspan="6" class="empty">Error loading data</td></tr>`;
       showToast("Ledger fetch failed");
     }
   }
@@ -180,6 +193,21 @@ async function searchLedger() {
     return String(value || "").toUpperCase() === "PAYABLE" ? "Payable" : "Receivable";
   }
 
+  function setLedgerMode(mode) {
+    const accountMode = mode === "account";
+    Array.from(document.querySelectorAll?.(".ledger-account-balance") || []).forEach(card => {
+      card.hidden = !accountMode;
+    });
+    const totalLabel = document.querySelector?.("#totalBalance")?.previousElementSibling;
+    if (totalLabel) totalLabel.innerText = accountMode ? "Net (Receivable - Payable)" : "Balance";
+    const head = document.getElementById("ledgerHead");
+    if (!head) return;
+    head.innerHTML = accountMode
+      ? `<tr><th>Date</th><th>Account</th><th>Transaction</th><th>Ref</th><th>Details</th><th>Debit</th><th>Credit</th><th>Account Balance</th><th>Net</th></tr>`
+      : `<tr><th>Date</th><th>Transaction</th><th>Ref</th><th>Details</th><th>Amount</th><th>Balance</th></tr>`;
+    document.querySelector?.(".ledger-table")?.classList.toggle("account-ledger", accountMode);
+  }
+
   function formatLedgerDate(value) {
     const parts = String(value || "").split("-");
     if (parts.length !== 3) return value || "";
@@ -197,9 +225,15 @@ async function searchLedger() {
     const summary = document.getElementById("partySummary");
     if (!summary || !detail || detail.error) return;
 
-    const values = [
+    const values = detail.ledger_mode === "account" ? [
       ["Opening Receivable", detail.summary.opening_receivable],
       ["Opening Payable", detail.summary.opening_payable],
+      ["Sales", detail.summary.total_sales],
+      ["Purchases", detail.summary.total_purchase],
+      ["Received", detail.summary.total_received],
+      ["Paid", detail.summary.total_paid]
+    ] : [
+      ["Opening Balance", detail.summary.opening_balance],
       ["Sales", detail.summary.total_sales],
       ["Purchases", detail.summary.total_purchase],
       ["Received", detail.summary.total_received],
